@@ -56,6 +56,8 @@ build/macos/halo build/macos/halo_guest.elf
 That development command uses `build/macos/saves/` by default; the app uses the
 Mac Application Support location above.
 
+For a Mac-versus-iPhone LAN match, follow [Apple System Link setup](../../docs/apple-multiplayer.md).
+
 ## Build
 
 First complete [Apple build setup](../../docs/apple-build.md): clone the fork,

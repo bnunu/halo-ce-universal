@@ -7,8 +7,8 @@ the iPhone build also uses native ARM code and ANGLE's Metal renderer.
 ## 1. Clone and install public dependencies
 
 ```sh
-git clone https://github.com/zimm3rmann/halo-ce-universal.git
-cd halo-ce-universal
+git clone https://github.com/zimm3rmann/halo-ce-ios-macos.git
+cd halo-ce-ios-macos
 ```
 
 Install Xcode Command Line Tools for a Mac-only build, or full Xcode 26 or later

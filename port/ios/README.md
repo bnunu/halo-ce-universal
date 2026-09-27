@@ -75,6 +75,8 @@ into its `Documents/GameData/` through Finder file sharing or Files → On My iP
 bundled maps. Saves, `config.toml` and `halo.log` are in `Library/Application Support/Halo`
 inside the app container. Do not publish the app bundle or local signing logs.
 
+For multiplayer on a physical phone, see [Mac and iPhone System Link](../../docs/apple-multiplayer.md).
+
 ## Simulator
 
 No device development team is needed:

@@ -1,5 +1,7 @@
 /* The shared Winsock adapter with Darwin sockaddr layout translation. */
+#include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +32,27 @@ static int darwin_connect(int fd, const struct sockaddr *a, socklen_t n) {
 static ssize_t darwin_sendto(int fd, const void *p, size_t n, int f, const struct sockaddr *a,
                              socklen_t an) {
     struct sockaddr_storage s = input_address(a, an);
-    return sendto(fd, p, n, f, (void *)&s, an);
+    ssize_t r = sendto(fd, p, n, f, (void *)&s, an);
+    if (r < 0 && errno == EISCONN) {
+        /* Halo supplies a destination even after connecting its gameplay UDP
+           socket. Darwin rejects that Winsock/Linux pattern. Use send() only
+           when the explicit destination is the connected datagram peer. */
+        struct sockaddr_storage peer;
+        socklen_t peer_length = sizeof(peer), type_length = sizeof(int);
+        int type;
+        if (s.ss_family == AF_INET && an >= sizeof(struct sockaddr_in) &&
+            getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_length) == 0 &&
+            type == SOCK_DGRAM && getpeername(fd, (void *)&peer, &peer_length) == 0 &&
+            peer.ss_family == AF_INET && peer_length >= sizeof(struct sockaddr_in)) {
+            const struct sockaddr_in *destination = (const void *)&s;
+            const struct sockaddr_in *connected = (const void *)&peer;
+            if (destination->sin_port == connected->sin_port &&
+                destination->sin_addr.s_addr == connected->sin_addr.s_addr)
+                return send(fd, p, n, f);
+        }
+        errno = EISCONN;
+    }
+    return r;
 }
 static ssize_t darwin_recvfrom(int fd, void *p, size_t n, int f, struct sockaddr *a,
                                socklen_t *an) {

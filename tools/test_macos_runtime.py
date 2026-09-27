@@ -34,6 +34,10 @@ def main():
         "port/macos/host/host_syscall.c", "port/macos/host/host_errno.c",
         "-o", OUT / "host_memory")
     run(OUT / "host_memory")
+    run("clang", "-arch", "arm64", "-O2", "-Wall", "-I.", "-Iport/linux/src",
+        "port/macos/tests/host_network.c", "port/macos/host/posix_net.c",
+        "-o", OUT / "host_network")
+    run(OUT / "host_network")
     sdl = Path(os.environ.get("HALO_MACOS_SDL_PREFIX", "/opt/homebrew/opt/sdl3"))
     angle = Path(os.environ.get("HALO_MACOS_ANGLE_DIR", str(ROOT / "build/macos/angle/dist")))
     egl = angle / "EGL.xcframework/macos-arm64"
