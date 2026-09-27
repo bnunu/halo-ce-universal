@@ -9,6 +9,45 @@ The CPU code runs natively on ARM64. The existing GLES renderer uses ANGLE's
 Metal backend. No Windows runtime, Xbox emulator, Apple Developer account,
 special entitlement, or security-setting change is required for this local build.
 
+## Install with one command
+
+On a Mac with Apple silicon (M1 or later) and macOS 14 or later, open Terminal
+and paste:
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/bnunu/halo-ce-universal/macos/port/macos/install.sh)"
+```
+
+[install.sh](install.sh) does every step of [Build](#build) for you:
+
+1. Checks the Mac: Apple silicon, macOS 14, 12 GB free.
+2. Installs Apple's command line tools (a window asks first) and
+   [Homebrew](https://brew.sh/) if they are missing (Homebrew asks for your
+   Mac password), then `brew install python cmake llvm@22 lld@22 sdl3 ninja`.
+3. Downloads this repository into `~/HaloCEUniversal/game`.
+4. Asks for your two files, after looking in Downloads, Desktop and Documents
+   by itself: drag each into the Terminal window. The Xbox SDK can be its disc
+   image (`XBOXSDK_3911.ISO`), its installer (`XDKSetupEng.exe`), an archive
+   holding one, or a folder with `xbox/include`; the game can be the disc image
+   (extract-xiso images and full dumps), an archive holding one, or a folder
+   with `maps/`. [tools/macos_inputs.py](../../tools/macos_inputs.py) unpacks
+   them with macOS's own `tar` and checks them (the SDK by the SHA-256 of
+   `D3D8.h`, the maps by their build): the headers go to `game/xbox/include`,
+   the maps to `~/HaloCEUniversal/data`.
+5. Runs `tools/macos_setup.py`, `tools/macos_preflight.py` and
+   `tools/macos_build.py --data-root ~/HaloCEUniversal/data`.
+6. Copies `Halo CE Universal.app` to Applications (`~/Applications` when
+   `/Applications` isn't writable) and starts it.
+
+Run the same command again to update: it fetches the newest source and
+rebuilds what changed. Options go after `--`, for example
+`/bin/bash -c "$(curl ...)" -- --xdk ~/Downloads/XBOXSDK_3911.ISO`:
+`--xdk PATH` and `--data PATH` choose the files, `--no-open` doesn't start
+Halo, and `--uninstall` removes the app and `~/HaloCEUniversal` (saved games
+and Homebrew stay). What each run did is in `~/HaloCEUniversal/install.log`.
+`HALO_MAC_ROOT`, `HALO_MAC_REPO` and `HALO_MAC_BRANCH` choose the install
+folder, the repository and the branch.
+
 ## Launch
 
 Open `build/macos/Halo CE Universal.app` in Finder. There is no automatic timeout.

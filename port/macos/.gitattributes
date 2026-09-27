@@ -1,0 +1,2 @@
+# install.sh is downloaded raw and run by bash, which needs LF line endings
+*.sh text eol=lf

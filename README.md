@@ -6,7 +6,16 @@ This fork adds playable native Apple Silicon macOS and iPhone builds to
 It builds on the decompilation of Halo: Combat Evolved build 2342
 (`cachebeta.exe`, sha256 `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`).
 
-**Start here: [Apple build setup](docs/apple-build.md)**, then follow the
+**On a Mac, one command does it all:** it installs what the build needs,
+takes your XDK and Halo disc image, builds Halo and adds it to Applications
+([port/macos/install.sh](port/macos/install.sh), see
+[Install with one command](port/macos/README.md#install-with-one-command)):
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/bnunu/halo-ce-universal/macos/port/macos/install.sh)"
+```
+
+**To build by hand, start here: [Apple build setup](docs/apple-build.md)**, then follow the
 [Mac instructions](port/macos/README.md#build) or
 [iPhone instructions](port/ios/README.md#build).
 The Apple renderer uses ANGLE's Metal backend. Mac keyboard/mouse and iPhone
