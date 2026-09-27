@@ -138,7 +138,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 	platform_mouse_capture(TRUE);
 #endif
 	return TRUE;
@@ -370,7 +370,7 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			input_state.focused = TRUE;
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 			if (!input_state.mouse_released)
 				platform_mouse_capture(TRUE);
 #endif

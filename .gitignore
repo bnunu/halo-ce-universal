@@ -40,3 +40,50 @@ xbox/
 # Locally extracted proprietary game data (never commit)
 assets/
 original/
+
+# Game images, extracted Xbox content, and SDK installers/archives
+*.iso
+*.xiso
+*.xbe
+*.map
+*.7z
+*.rar
+*.zip
+*.cab
+*.msi
+
+# Apple build products and machine-specific Xcode settings
+.DS_Store
+DerivedData/
+*.app/
+*.ipa
+*.xcarchive/
+*.dSYM/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+*.xcent
+*.xcresult/
+*.elf
+*.o
+*.dylib
+*.log
+
+# Local signing identities, provisioning profiles, credentials, and secrets
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.cer
+*.crt
+*.csr
+*.mobileprovision
+*.provisionprofile
+*.keychain*
+*.jks
+*.keystore
+.env
+.env.*
+!*.env.example

@@ -115,6 +115,27 @@ parser.add_argument(
     type=str,
     help="clang with the arm64_32 target for the Android guest (default: clang)",
 )
+parser.add_argument(
+    "--macos", action="store_true",
+    help="generate the rebased Apple Silicon guest target (use tools/macos_build.py for the complete app)",
+)
+parser.add_argument("--ios", action="store_true", help="generate the signed-image iPhone guest target")
+parser.add_argument(
+    "--android-guest-only", action="store_true",
+    help="build only the portable ARM game image, without an Android host or APK",
+)
+parser.add_argument(
+    "--android-guest-llvm-bin", type=Path,
+    help="directory containing llvm-ar and ld.lld for --android-guest-only",
+)
+parser.add_argument(
+    "--android-guest-gl-include", type=Path,
+    help="directory containing Khronos GLES2/, GLES3/ and KHR/ headers for --android-guest-only",
+)
+parser.add_argument(
+    "--android-guest-builtins", type=Path,
+    help="optional AArch64 ELF compiler builtins archive for --android-guest-only",
+)
 if not is_windows():
     parser.add_argument(
         "--wrapper",
@@ -180,6 +201,20 @@ sln.port_pgo = args.pgo
 sln.port_pgo_profile = args.pgo_profile
 sln.android_ndk = args.android_ndk
 sln.android_guest_cc = args.android_guest_cc
+sln.android_guest_only = args.android_guest_only
+sln.android_guest_llvm_bin = args.android_guest_llvm_bin
+sln.android_guest_gl_include = args.android_guest_gl_include
+sln.android_guest_builtins = args.android_guest_builtins
+sln.macos = args.macos
+if args.macos and args.ios:
+    parser.error("Choose either --macos or --ios")
+sln.ios = args.ios
+if args.ios:
+    sln.android_guest_only = True
+    sln.android_guest_cc = "tools/ios_guest_cc.py"
+if args.macos:
+    sln.android_guest_only = True
+    sln.android_guest_cc = "tools/macos_guest_cc.py"
 if not is_windows():
     sln.wrapper = args.wrapper
 

@@ -19,6 +19,9 @@ import sys
 
 def main():
     arguments = sys.argv[1:]
+    ios = "--ios" in arguments
+    if ios:
+        arguments.remove("--ios")
     host_table = None
     if arguments[0] == "--host-table":
         host_table = arguments[1]
@@ -38,10 +41,15 @@ def main():
             f"\t.type {name},%function",
             "\t.p2align 2",
             f"{name}:",
-            f"\tadrp x16, __host_import_table+{offset}",
-            f"\tldr x16, [x16, :lo12:__host_import_table+{offset}]",
-            "\tbr x16",
         ]
+        if ios:
+            out += [f"\tmovz w16, #:abs_g0_nc:__host_import_table+{offset}",
+                    f"\tmovk w16, #:abs_g1_nc:__host_import_table+{offset}",
+                    "\torr x16, x16, #0x400000000", "\tldr x16, [x16]"]
+        else:
+            out += [f"\tadrp x16, __host_import_table+{offset}",
+                    f"\tldr x16, [x16, :lo12:__host_import_table+{offset}]"]
+        out += ["\tbr x16"]
     out += [
         "\t.section .rodata",
         "\t.globl __host_import_names",

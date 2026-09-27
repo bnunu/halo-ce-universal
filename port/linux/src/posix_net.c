@@ -12,7 +12,9 @@ with the host ABI.
 #include <netinet/in.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#ifndef HALO_IOS /* Darwin host supplies arc4random_buf through its wrapper. */
 #include <sys/random.h>
+#endif
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>

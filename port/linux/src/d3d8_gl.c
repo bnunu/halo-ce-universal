@@ -295,6 +295,9 @@ struct gl_device
 
 	GLuint queries[VISIBILITY_TEST_SLOTS];
 	BOOL query_pending[VISIBILITY_TEST_SLOTS];
+#ifdef HALO_MACOS
+	GLuint query_results[VISIBILITY_TEST_SLOTS];
+#endif
 	GLuint active_query;
 	BOOL visibility_test_active;
 #ifdef HALO_ANDROID
@@ -1166,6 +1169,25 @@ void WINAPI D3DDevice_InsertCallback(D3DCALLBACKTYPE type, D3DCALLBACK callback,
 
 /* ---------- visibility (occlusion) tests */
 
+#ifdef HALO_MACOS
+/* Match the desktop query-buffer path: use the last completed result rather
+than spin on a Metal command buffer. Poll before recycling a slot too, since
+transparent geometry asks for a result immediately after submitting it. */
+static void visibility_collect(unsigned long index)
+{
+	GLuint available = 0, samples;
+	if (!device.query_pending[index])
+		return;
+	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
+	if (available)
+	{
+		glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
+		device.query_results[index] = samples ? VISIBILITY_ALL_SAMPLES : 0;
+		device.query_pending[index] = FALSE;
+	}
+}
+#endif
+
 void WINAPI D3DDevice_BeginVisibilityTest(void)
 {
 	if (!device.gl_ready || device.visibility_test_active)
@@ -1208,6 +1230,9 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 	}
 #endif
 	glEndQuery(VISIBILITY_QUERY);
+#ifdef HALO_MACOS
+	visibility_collect(index);
+#endif
 	/* swap the scratch query into the requested slot */
 	scratch = device.queries[0];
 	device.queries[0] = device.queries[index];
@@ -1237,7 +1262,11 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	if (!device.gl_ready || !device.query_pending[index])
 	{
 		if (result)
+#ifdef HALO_MACOS
+			*result = device.gl_ready ? device.query_results[index] : 0;
+#else
 			*result = 0;
+#endif
 		return S_OK;
 	}
 #ifdef HALO_ANDROID
@@ -1250,6 +1279,12 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 			*result = samples;
 		return S_OK;
 	}
+#endif
+#ifdef HALO_MACOS
+	visibility_collect(index);
+	if (result)
+		*result = device.query_results[index];
+	return S_OK;
 #endif
 #ifndef HALO_ANDROID
 	if (device.visibility_results)
@@ -2932,6 +2967,73 @@ static void attribute_format(const struct vertex_element *element, GLint *size, 
 	}
 }
 
+#ifdef HALO_MACOS
+/* Metal requires four-byte vertex offsets and strides. Xbox model declarations
+put SHORT1 at byte 30 of a 32-byte vertex. ANGLE converts the entire backing
+buffer for that attribute, invalidating it on each upload. Expand only this
+draw's affected attribute instead. */
+static BOOL macos_attribute_needs_upload(const struct vertex_element *element)
+{
+	unsigned long stride = device.streams[element->stream].stride;
+	unsigned long address = device.streams[element->stream].data + element->offset;
+	return !stride || (stride & 3) || (address & 3);
+}
+
+static unsigned long macos_attribute_upload(const struct vertex_element *element,
+	unsigned long first, unsigned long count)
+{
+	static float *scratch;
+	static unsigned long capacity;
+	unsigned long stride = device.streams[element->stream].stride;
+	const unsigned char *source = PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[element->stream].data);
+	GLint components;
+	GLenum type;
+	GLboolean normalized;
+	unsigned long vertex, component;
+	if (count > capacity)
+	{
+		free(scratch);
+		capacity = count + 256;
+		scratch = malloc(capacity * 4 * sizeof(float));
+		if (!scratch)
+			abort();
+	}
+	attribute_format(element, &components, &type, &normalized);
+	source += first * stride + element->offset;
+	for (vertex = 0; vertex < count; vertex++)
+	{
+		float *out = scratch + vertex * 4;
+		const unsigned char *in = source + vertex * stride;
+		out[0] = out[1] = out[2] = 0;
+		out[3] = 1;
+		if (element->type == D3DVSDT_NORMPACKED3)
+		{
+			memcpy(out, in, 4);
+			continue;
+		}
+		for (component = 0; component < (unsigned long)components; component++)
+		{
+			if (type == GL_FLOAT)
+				memcpy(out + component, in + component * 4, 4);
+			else if (type == GL_SHORT)
+			{
+				short value;
+				memcpy(&value, in + component * 2, 2);
+				out[component] = normalized ? (value == -32768 ? -1.0f : value / 32767.0f) : (float)value;
+			}
+			else
+			{
+				unsigned long channel = component;
+				if (element->type == D3DVSDT_D3DCOLOR && (component == 0 || component == 2))
+					channel = 2 - component;
+				out[component] = normalized ? in[channel] / 255.0f : (float)in[channel];
+			}
+		}
+	}
+	return stream_upload(scratch, count * 4 * sizeof(float));
+}
+#endif
+
 /* upload vertices [first, first + count) of every stream the declaration
 uses and point the attributes at them; attribute data then starts at
 vertex 0 of the uploaded range */
@@ -2969,6 +3071,10 @@ static void setup_streams(unsigned long first, unsigned long count)
 		unsigned long bytes = stride ? stride * count : 64;
 		unsigned long base;
 
+#ifdef HALO_MACOS
+		if (device.streams[stream].data && element->type != D3DVSDT_NONE && macos_attribute_needs_upload(element))
+			total += count * 4 * sizeof(float);
+#endif
 		if (!device.streams[stream].data || element->type == D3DVSDT_NONE || placed[stream])
 			continue;
 		placed[stream] = TRUE;
@@ -2994,6 +3100,18 @@ static void setup_streams(unsigned long first, unsigned long count)
 
 		if (!device.streams[stream].data || element->type == D3DVSDT_NONE)
 			continue;
+#ifdef HALO_MACOS
+		if (macos_attribute_needs_upload(element))
+		{
+			unsigned long offset = macos_attribute_upload(element, first, count);
+			BOOL packed = element->type == D3DVSDT_NORMPACKED3;
+			state_attribute_pointer(element->reg, device.stream_buffer, packed ? 1 : 4,
+				packed ? GL_UNSIGNED_INT : GL_FLOAT, GL_FALSE, packed, 4 * sizeof(float), offset);
+			enabled[element->reg] = TRUE;
+			stats.streamed_bytes += count * 4 * sizeof(float);
+			continue;
+		}
+#endif
 		if (!stream_buffers[stream])
 		{
 			const unsigned char *base = PLATFORM_PHYSICAL_TO_VIRTUAL(device.streams[stream].data);
