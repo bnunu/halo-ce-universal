@@ -12,6 +12,7 @@ and the debug keyboard that the game's console reads.
 #include "platform.h"
 #include "sdl_platform.h"
 #include "gl.h"
+#include "port_config.h"
 
 #include <SDL3/SDL.h>
 #include <stdlib.h>
@@ -26,6 +27,11 @@ static struct platform_input_state input_state;
 /* keys pressed since the last read, so a press and release between two
 reads still counts as a press (input injected on Android, or a slow frame) */
 static unsigned char keys_pressed[SDL_SCANCODE_COUNT];
+#ifndef HALO_ANDROID
+/* the menus' pointer (platform_ui_pointer_set_active), under input_lock */
+static struct platform_ui_pointer ui_pointer;
+static float ui_pointer_wheel;
+#endif
 static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* debug keyboard queue */
@@ -61,18 +67,43 @@ int halo_interpolation_enabled(void)
 	static int enabled = -1;
 
 	if (enabled < 0)
-	{
-		const char *setting = getenv("HALO_INTERPOLATION");
-
-		enabled = !(setting && !strcmp(setting, "0"));
-	}
+		enabled = config_boolean("display.interpolation");
 	return enabled;
 }
 
+#ifndef HALO_ANDROID
+/* whether the window opens fullscreen (display.fullscreen), never when it
+is hidden */
+static BOOL platform_fullscreen_setting(void)
+{
+	return !config_boolean("debug.hidden_window") && config_boolean("display.fullscreen");
+}
+
+/* whether the game is, or is to be, fullscreen, and if so the size in
+pixels of the display it fills (d3d8_gl.c draws at that resolution) */
+BOOL platform_screen_mode(long *width, long *height)
+{
+	SDL_DisplayID display;
+	const SDL_DisplayMode *mode;
+
+	if (platform_window ? !(SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN) :
+		!platform_fullscreen_setting() || !platform_sdl_initialize())
+	{
+		return FALSE;
+	}
+	display = platform_window ? SDL_GetDisplayForWindow(platform_window) : SDL_GetPrimaryDisplay();
+	mode = display ? SDL_GetDesktopDisplayMode(display) : NULL;
+	if (!mode)
+		return FALSE;
+	*width = (long)(mode->w * mode->pixel_density + 0.5f);
+	*height = (long)(mode->h * mode->pixel_density + 0.5f);
+	return TRUE;
+}
+
+#endif
 BOOL platform_video_initialize(unsigned long width, unsigned long height)
 {
-	const char *scale_text = getenv("HALO_WINDOW_SCALE");
-	int scale = scale_text ? atoi(scale_text) : 2;
+	int scale = (int)config_integer("display.window_scale");
 	int version;
 
 	if (platform_window)
@@ -94,7 +125,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
-	if (getenv("HALO_GL_DEBUG"))
+	if (config_boolean("debug.gl_debug"))
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 #if !defined(HALO_ANDROID) && !defined(_WIN32)
 	/* Mesa's GL thread: the renderer makes thousands of GL calls a frame
@@ -108,8 +139,14 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	platform_window = SDL_CreateWindow("Halo", (int)(width * scale), (int)(height * scale),
 		SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
 #else
+	/* fullscreen at the desktop's resolution unless display.fullscreen is
+	false, where the game draws the display's shape at its resolution
+	(d3d8_gl.c); the window size is the windowed mode F11 switches to and
+	from, where it draws 640x480 */
 	platform_window = SDL_CreateWindow("Halo", (int)(width * scale), (int)(height * scale),
-		SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | (getenv("HALO_HIDDEN_WINDOW") ? SDL_WINDOW_HIDDEN : 0));
+		SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+		(config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0) |
+		(platform_fullscreen_setting() ? SDL_WINDOW_FULLSCREEN : 0));
 #endif
 	if (!platform_window)
 	{
@@ -134,7 +171,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	SDL_GL_MakeCurrent(platform_window, platform_gl_context);
 	if (!gl_functions_load())
 		return FALSE;
-	version = SDL_GL_SetSwapInterval(getenv("HALO_NO_VSYNC") ? 0 : 1);
+	version = SDL_GL_SetSwapInterval(config_boolean("display.vsync") ? 1 : 0);
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
@@ -308,7 +345,7 @@ BOOL platform_next_keystroke(struct platform_keystroke *keystroke)
 
 void platform_pump_events(void)
 {
-	/* HALO_EXIT_AFTER=<seconds> ends the game that long after the window
+	/* debug.exit_after (seconds) ends the game that long after the window
 	opens, as closing it does (tools/pgo_train.py) */
 	static Uint64 exit_ticks = (Uint64)-1;
 	SDL_Event event;
@@ -317,13 +354,13 @@ void platform_pump_events(void)
 		return;
 	if (exit_ticks == (Uint64)-1)
 	{
-		const char *setting = getenv("HALO_EXIT_AFTER");
+		double seconds = config_real("debug.exit_after");
 
-		exit_ticks = setting ? SDL_GetTicks() + (Uint64)(atof(setting) * 1000.0) : 0;
+		exit_ticks = seconds > 0.0 ? SDL_GetTicks() + (Uint64)(seconds * 1000.0) : 0;
 	}
 	if (exit_ticks && SDL_GetTicks() >= exit_ticks)
 	{
-		platform_log("exiting after HALO_EXIT_AFTER");
+		platform_log("exiting after debug.exit_after");
 		exit(EXIT_SUCCESS);
 	}
 	pthread_mutex_lock(&input_lock);
@@ -348,19 +385,75 @@ void platform_pump_events(void)
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F12)
 			{
 				input_state.mouse_released = !input_state.mouse_released;
-				platform_mouse_capture(!input_state.mouse_released);
+				platform_mouse_capture(!input_state.mouse_released && !input_state.ui_pointer);
 			}
+#ifndef HALO_ANDROID
+			/* F11 switches between fullscreen and the window (SDL keeps the
+			window's size and place while fullscreen) */
+			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F11)
+			{
+				SDL_SetWindowFullscreen(platform_window,
+					(SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
+			}
+#endif
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
+#ifndef HALO_ANDROID
+			/* in the menus the mouse moves the pointer, not the view */
+			if (input_state.ui_pointer)
+			{
+				ui_pointer.x = event.motion.x;
+				ui_pointer.y = event.motion.y;
+				ui_pointer.moved = TRUE;
+				break;
+			}
+#endif
 			input_state.mouse_dx += event.motion.xrel;
 			input_state.mouse_dy += event.motion.yrel;
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP:
+#ifndef HALO_ANDROID
+			/* clicks in the menus go to the pointer; a button held down
+			when the menu closes stays up until pressed again, so the click
+			that resumes the game does not also fire */
+			if (input_state.ui_pointer)
+			{
+				if (event.button.down && event.button.button == SDL_BUTTON_LEFT)
+				{
+					ui_pointer.left_clicks++;
+					ui_pointer.click_x = event.button.x;
+					ui_pointer.click_y = event.button.y;
+				}
+				else if (event.button.down && event.button.button == SDL_BUTTON_RIGHT)
+				{
+					ui_pointer.right_clicks++;
+				}
+				break;
+			}
+#endif
 			if (event.button.button < PLATFORM_MOUSE_BUTTON_COUNT)
 				input_state.mouse_buttons[event.button.button] = event.button.down;
 			break;
 		case SDL_EVENT_MOUSE_WHEEL:
+#ifndef HALO_ANDROID
+			if (input_state.ui_pointer)
+			{
+				/* whole notches: smooth-scrolling wheels send fractions */
+				ui_pointer_wheel += event.wheel.y;
+				while (ui_pointer_wheel >= 1.0f)
+				{
+					ui_pointer.wheel_steps++;
+					ui_pointer_wheel -= 1.0f;
+				}
+				while (ui_pointer_wheel <= -1.0f)
+				{
+					ui_pointer.wheel_steps--;
+					ui_pointer_wheel += 1.0f;
+				}
+				break;
+			}
+#endif
 			input_state.mouse_wheel += event.wheel.y;
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -371,7 +464,7 @@ void platform_pump_events(void)
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			input_state.focused = TRUE;
 #if !defined(HALO_ANDROID) || defined(HALO_MACOS)
-			if (!input_state.mouse_released)
+			if (!input_state.mouse_released && !input_state.ui_pointer)
 				platform_mouse_capture(TRUE);
 #endif
 			break;
@@ -385,6 +478,61 @@ void platform_pump_events(void)
 	pthread_mutex_unlock(&input_lock);
 }
 
+#ifndef HALO_ANDROID
+/* ---------- the menus' pointer */
+
+/* While a menu is up the mouse is released, its pointer shows (centered when
+the menu opens) and its motion, clicks and wheel go to the menus
+(halo_ui_pointer_update, d3d8_gl.c) instead of the controller and the aim. */
+void platform_ui_pointer_set_active(BOOL active)
+{
+	if (!platform_window || (active != FALSE) == (input_state.ui_pointer != FALSE))
+		return;
+	pthread_mutex_lock(&input_lock);
+	input_state.ui_pointer = active;
+	memset(&ui_pointer, 0, sizeof(ui_pointer));
+	ui_pointer_wheel = 0.0f;
+	input_state.mouse_dx = 0.0f;
+	input_state.mouse_dy = 0.0f;
+	input_state.mouse_wheel = 0.0f;
+	memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
+	pthread_mutex_unlock(&input_lock);
+	platform_mouse_capture(!active && !input_state.mouse_released);
+	if (active)
+	{
+		int width, height;
+
+		SDL_GetWindowSize(platform_window, &width, &height);
+		SDL_WarpMouseInWindow(platform_window, width * 0.5f, height * 0.5f);
+		pthread_mutex_lock(&input_lock);
+		ui_pointer.x = width * 0.5f;
+		ui_pointer.y = height * 0.5f;
+		pthread_mutex_unlock(&input_lock);
+	}
+}
+
+/* what the pointer did since the last call; FALSE when it is not active */
+BOOL platform_ui_pointer_read(struct platform_ui_pointer *pointer)
+{
+	BOOL active;
+
+	pthread_mutex_lock(&input_lock);
+	active = input_state.ui_pointer;
+	*pointer = ui_pointer;
+	ui_pointer.moved = FALSE;
+	ui_pointer.left_clicks = 0;
+	ui_pointer.right_clicks = 0;
+	ui_pointer.wheel_steps = 0;
+	pthread_mutex_unlock(&input_lock);
+	return active;
+}
+
+void platform_video_window_size(int *width, int *height)
+{
+	SDL_GetWindowSize(platform_window, width, height);
+}
+
+#endif
 void platform_input_read(struct platform_input_state *state, BOOL consume_motion)
 {
 	pthread_mutex_lock(&input_lock);

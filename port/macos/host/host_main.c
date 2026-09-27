@@ -144,9 +144,9 @@ int main(int argc, char **argv) {
     if (display && display->h > 0) {
         char width[32];
         snprintf(width, sizeof(width), "%d", (480 * display->w / display->h) & ~1);
-        setenv("HALO_SCREEN_WIDTH", width, 0);
+        setenv("HALO_DISPLAY_WIDTH", width, 0);
         host_logf(HOST_LOG_INFO, "Display %dx%d; game aspect %sx480", display->w,
-                  display->h, getenv("HALO_SCREEN_WIDTH"));
+                  display->h, getenv("HALO_DISPLAY_WIDTH"));
     }
     const char *image_path = argc == 2 ? argv[1] : default_image;
     FILE *file = fopen(image_path, "rb");

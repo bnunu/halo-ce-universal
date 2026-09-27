@@ -23,7 +23,7 @@ display this is 740x480 into a 3420x2214 drawable. Set `HALO_WINDOWED=1` for a
 resizable window or `HALO_SCREEN_WIDTH=640` to restore the original 4:3 view.
 `HALO_WINDOW_SCALE` controls the initial size in windowed mode.
 
-Saves, cache files, and `halo.log` are under:
+Saves, cache files, `config.toml`, and `halo.log` are under:
 
 ```text
 ~/Library/Application Support/Halo CE Universal/
@@ -76,6 +76,11 @@ the local app is ad-hoc signed automatically. For compiler/runtime checks:
 python3 tools/test_macos_runtime.py
 python3 -m unittest tools.test_macos_preflight
 ```
+
+The shared settings are read from `config.toml` in the save directory, with
+`HALO_*` environment overrides still supported. The Mac host keeps its
+`HALO_WINDOWED` setting and 480-line render scale; the upstream desktop-only
+F11/menu-pointer path is not yet bridged through the ARM host.
 
 The default LLVM path is `/opt/homebrew/opt/llvm/bin`. `HALO_MACOS_SDL_PREFIX`
 and `HALO_MACOS_ANGLE_DIR` can select other dependency locations. SDL's guest

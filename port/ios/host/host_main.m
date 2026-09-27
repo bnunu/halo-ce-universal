@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
         int long_side = display->w > display->h ? display->w : display->h;
         int short_side = display->w < display->h ? display->w : display->h;
         char width[32]; snprintf(width, sizeof(width), "%d", (480 * long_side / short_side) & ~1);
-        setenv("HALO_SCREEN_WIDTH", width, 0);
+        setenv("HALO_DISPLAY_WIDTH", width, 0);
     }
     if (host_load_image(NULL, 0)) host_fatal("Cannot initialize game memory. Check the app's Extended Virtual Addressing signing capability.");
     uint32_t boot = make_boot();

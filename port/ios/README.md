@@ -72,7 +72,7 @@ The default local build includes `assets/maps` (roughly 1.8 GB). Use
 `--no-bundle-maps` to omit them, open the app once, then copy your `maps` folder
 into its `Documents/GameData/` through Finder file sharing or Files → On My iPhone
 → Halo. Reopen the app after copying. It prefers `Documents/GameData/maps` over
-bundled maps. Saves and `halo.log` are in `Library/Application Support/Halo`
+bundled maps. Saves, `config.toml` and `halo.log` are in `Library/Application Support/Halo`
 inside the app container. Do not publish the app bundle or local signing logs.
 
 ## Simulator
