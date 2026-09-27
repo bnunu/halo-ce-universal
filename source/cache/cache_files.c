@@ -585,7 +585,13 @@ boolean cache_file_header_verify(
 		return FALSE;
 	}
 
-	if (csstrcmp(header->build, "01.01.14.2342"))
+	/* Retail NTSC uses the same version-5 cache format. Keep the matching
+	 * Xbox build's original check; native ports also accept retail USA data. */
+	if (csstrcmp(header->build, "01.01.14.2342")
+#ifdef HALO_LINUX
+		&& csstrcmp(header->build, "01.10.12.2276")
+#endif
+		)
 	{
 		if (fatal)
 		{

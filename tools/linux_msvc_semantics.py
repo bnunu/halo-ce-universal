@@ -42,14 +42,18 @@ SOURCE_SUFFIXES = {".c", ".h", ".inl"}
 
 def source_files(roots: Iterable[Path]) -> List[Path]:
     files: List[Path] = []
+    seen: Set[Path] = set()
     for root in roots:
-        files.extend(
-            path
-            for path in sorted(root.rglob("*"))
-            if path.suffix.lower() in SOURCE_SUFFIXES and path.is_file()
-            # the SDK overlay lists each header under several spellings
-            and (not path.is_symlink() or path.name == path.name.lower())
-        )
+        for path in sorted(root.rglob("*")):
+            if path.suffix.lower() not in SOURCE_SUFFIXES or not path.is_file():
+                continue
+            # The SDK overlay aliases each header under several spellings.
+            # On a case-insensitive volume only the first (possibly mixed-case)
+            # spelling survives, so filtering for lowercase loses that header.
+            target = path.resolve()
+            if target not in seen:
+                seen.add(target)
+                files.append(path)
     return files
 
 

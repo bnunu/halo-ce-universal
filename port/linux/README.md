@@ -33,13 +33,13 @@ build/linux/halo
 ```
 
 The game data (the directory holding `maps/`) is found automatically:
-`HALO_DATA_ROOT` if set, else the current directory when it has `maps/`,
-else `assets/`, looked up in the current directory and in the repository
-that holds the executable. It must be the PAL data of this build
+`paths.data` in `config.toml` if set (see Settings), else the current
+directory when it has `maps/`, else `assets/`, looked up in the current
+directory and in the repository that holds the executable. It must be the PAL data of this build
 (01.01.14.2342); the game rejects cache files from any other build.
 
 `d:\` is the data root. Every other Xbox drive `X:\` is the directory `X/`
-below the save root, which is `HALO_SAVE_ROOT`, else
+below the save root, which is `paths.saves`, else
 `$XDG_DATA_HOME/halo-linux` (`~/.local/share/halo-linux`): `z:\` holds the
 cache partition (about 800 MB of copied map data) and saves, `u:\` user
 data. Directories are created on first use and path components are matched
@@ -61,7 +61,7 @@ further gamepads become controllers 2-4.
 | space, enter | A (jump, accept) |
 | F, backspace, mouse button 4 | B (melee, back) |
 | E, R | X (action, reload) |
-| tab, mouse wheel | Y (switch weapon) |
+| tab, mouse wheel | Y (switch weapon; one scroll of the wheel switches once, and scrolling again after a moment's pause switches again) |
 | Q | white (flashlight) |
 | X | black |
 | left ctrl, C | left stick click (crouch) |
@@ -71,27 +71,45 @@ further gamepads become controllers 2-4.
 | F1 | back |
 | \` | opens the developer console (typing then goes to the console) |
 | F12 | releases or recaptures the mouse |
+| F11 | switches between fullscreen and the window |
+
+In the menus (the main menu, the pause menu and the dialogs), the mouse is released and drives a pointer: the item under it takes the focus, a left click selects it (on a setting with a value, clicking its left or right half steps the value; on the rows of profiles and levels, clicking one moves to it and selects it; on a button in a screen's key, such as "B = Back", presses that button), a right click goes back and the wheel moves through the items. The keyboard keeps working alongside it. When the game resumes the mouse aims again; a button held from the click that resumed it does not fire until pressed again.
 
 ### Settings
 
-| Variable | Effect |
-| --- | --- |
-| `HALO_DATA_ROOT`, `HALO_SAVE_ROOT` | see above |
-| `HALO_WINDOW_SCALE` | initial window size as a multiple of 640x480 (default 2); the window is resizable and the picture is letterboxed |
-| `HALO_MOUSE_SENSITIVITY` | mouse aim multiplier (default 1.0) |
-| `HALO_MOUSE_INVERT` | set to invert vertical mouse aim |
-| `HALO_VOLUME` | master volume (default 1.0) |
-| `HALO_NO_AUDIO` | do not open an audio device (sound still runs, silently) |
-| `HALO_LANGUAGE` | dashboard language: `en`, `ja`, `de`, `fr`, `es`, `it` |
-| `HALO_INTERPOLATION=0` | the original 30 frames per second (see Frame rate) |
-| `HALO_NO_VSYNC` | do not wait for the display between frames |
-| `HALO_EXIT_AFTER=<seconds>` | quit that long after the window opens (profile training, benchmarks) |
-| `mesa_glthread=false` | with Mesa drivers, make the GL calls on the game's own thread (the game turns Mesa's GL thread on otherwise) |
-| `HALO_NET_ADDRESS=<IPv4>` | this machine's system link address: sockets bind to it instead of to every address, other machines see games at it, and traffic to 127.0.0.1 goes to it. Lets several copies of the game play together on one computer, each on its own loopback address (see System link) |
-| `HALO_NET_BROADCAST=<IPv4>,...` | send the game search broadcast to these addresses instead of 255.255.255.255, for example to the loopback address of a host on the same computer |
-| `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | write every Nth presented frame as a BMP |
-| `HALO_GPU_STATS`, `HALO_GPU_TRACE=<frame>` (with `HALO_GPU_TRACE_CONSTANTS`), `HALO_GPU_DUMP_SHADERS=<dir>`, `HALO_TEXTURE_DUMP=<dir>`, `HALO_TEXTURE_LOG`, `HALO_GL_DEBUG`, `HALO_TEXTURE_NO_CACHE` | renderer debugging: per-frame counts, a full state trace of one frame, the generated GLSL, uploaded textures |
-| `HALO_GPU_SKIP_VS=<id>,...`, `HALO_GPU_DEBUG_EXPR=<glsl>`, `HALO_GPU_DEBUG_FLAT`, `HALO_GPU_DEBUG_T0` | renderer debugging: drop draws by vertex shader, or replace every pixel shader's output with a GLSL expression (for example `t0.rgb` or `xD0.rgb`) |
+The settings are in `config.toml` next to the executable
+(`build/linux/config.toml`). The game writes it with the defaults and a
+comment on each setting the first time it runs; delete it to get the
+defaults back. It is read once at start-up, with
+[tomlc17](../third_party/tomlc17) (`src/port_config.c`): a misspelt key or a
+value of the wrong type is reported in the log (with its line) and the
+default used. Each setting can also be set for one run with its environment
+variable, which wins over the file; the tools use those
+(`tools/pgo_train.py`).
+
+| Setting | Default | Environment | Effect |
+| --- | --- | --- | --- |
+| `display.fullscreen` | `true` | `HALO_FULLSCREEN` | fullscreen at the display's resolution and shape: 480 of the game's lines, as wide as the display (the view widens, the HUD keeps to the screen's edges, menus stay centered), each drawn at as many pixels as the display has; `false` opens a window, which draws the Xbox's 640x480. F11 switches between the two |
+| `display.window_scale` | `2` | `HALO_WINDOW_SCALE` | window size as a multiple of 640x480; the window is resizable and the picture is letterboxed |
+| `display.vsync` | `true` | `HALO_NO_VSYNC=1` turns it off | wait for the display between frames |
+| `display.interpolation` | `true` | `HALO_INTERPOLATION` | a frame at every display refresh; `false` the original 30 frames per second (see Frame rate) |
+| `audio.enabled` | `true` | `HALO_NO_AUDIO=1` turns it off | open an audio device (with `false`, sound still runs, silently) |
+| `audio.volume` | `1.0` | `HALO_VOLUME` | master volume |
+| `input.mouse_sensitivity` | `1.0` | `HALO_MOUSE_SENSITIVITY` | mouse aim multiplier |
+| `input.invert_mouse` | `false` | `HALO_MOUSE_INVERT=1` turns it on | invert vertical mouse aim |
+| `game.language` | `""` | `HALO_LANGUAGE` | dashboard language: `ja`, `de`, `fr`, `es`, `it`; empty for English |
+| `paths.data`, `paths.saves` | `""` | `HALO_DATA_ROOT`, `HALO_SAVE_ROOT` | see Running |
+| `network.address` | `""` | `HALO_NET_ADDRESS` | this machine's system link IPv4 address: sockets bind to it instead of to every address, other machines see games at it, and traffic to 127.0.0.1 goes to it. Lets several copies of the game play together on one computer, each on its own loopback address (see System link) |
+| `network.broadcast` | `""` | `HALO_NET_BROADCAST` | comma-separated IPv4 addresses to send the game's broadcasts (a client's game search, a host's game advertisement) to instead of 255.255.255.255, for example the other copies' loopback addresses on the same computer (listing 255.255.255.255 too still broadcasts). Machines with an address receive no broadcasts, so they find each other only through these lists |
+| `debug.exit_after` | `0.0` | `HALO_EXIT_AFTER` | quit that many seconds after the window opens (profile training, benchmarks) |
+| `debug.screenshot_directory`, `debug.screenshot_every` | `""`, `0` | `HALO_SCREENSHOT_DIR`, `HALO_SCREENSHOT_EVERY` | write every Nth presented frame as a BMP |
+| `debug.gpu_stats`, `debug.gpu_trace_frame` (with `debug.gpu_trace_constants`), `debug.gpu_dump_shaders`, `debug.texture_dump_directory`, `debug.texture_log`, `debug.gl_debug`, `debug.texture_no_cache` | off | `HALO_GPU_STATS`, `HALO_GPU_TRACE`, `HALO_GPU_TRACE_CONSTANTS`, `HALO_GPU_DUMP_SHADERS`, `HALO_TEXTURE_DUMP`, `HALO_TEXTURE_LOG`, `HALO_GL_DEBUG`, `HALO_TEXTURE_NO_CACHE` | renderer debugging: per-frame counts, a full state trace of one frame, the generated GLSL, uploaded textures |
+| `debug.gpu_skip_vertex_shaders`, `debug.gpu_debug_expression`, `debug.gpu_debug_flat`, `debug.gpu_debug_texture0` | off | `HALO_GPU_SKIP_VS`, `HALO_GPU_DEBUG_EXPR`, `HALO_GPU_DEBUG_FLAT`, `HALO_GPU_DEBUG_T0` | renderer debugging: drop draws by vertex shader, or replace every pixel shader's output with a GLSL expression (for example `t0.rgb` or `xD0.rgb`) |
+| `debug.hidden_window`, `debug.null_renderer` | `false` | `HALO_HIDDEN_WINDOW`, `HALO_NULL_RENDERER` | run with the window hidden, or with none |
+
+One environment variable is not the game's: `mesa_glthread=false`, with Mesa
+drivers, makes the GL calls on the game's own thread (the game turns Mesa's
+GL thread on otherwise).
 
 ### Frame rate
 
@@ -108,7 +126,7 @@ camera cuts snap. What is drawn is therefore one tick (33 ms) behind the
 simulation. Particles, contrails and other effects already moved every
 frame. The simulation itself is unchanged: 30 Hz, as on the Xbox.
 
-`HALO_INTERPOLATION=0` restores the original behaviour: one frame per
+`interpolation = false` in `config.toml` restores the original behaviour: one frame per
 tick, throttled to 30 per second.
 
 `display_framerate true` in the developer console shows the frame rate at
@@ -139,9 +157,16 @@ limits: every change is under `#ifdef HALO_LINUX`.
   of upload for a host of 128 machines (measured). The traffic grows with
   the square of the session; a host of 32 machines with one player each
   sends about 8 Mbit/s.
+  A 100 Mbit/s network carries about 100 machines, Wi-Fi far fewer.
 - The host waits up to 60 seconds (15 on the Xbox) for slower machines to
   load the map, and keeps the machines that have loaded connected
-  meanwhile.
+  meanwhile. A machine that stops reading the host's messages for two
+  seconds is dropped from the game rather than holding everyone up.
+- The game state is saved whole, so checkpoints and saved games are 16 MB
+  (3.4 MB on the Xbox), and saves from earlier native builds do not carry
+  over. Garbage (bodies, dropped weapons) is collected as on the Xbox in
+  campaign and games of up to 16 players, and in proportion to the players
+  in larger games.
 - The lobby has panels for the local machine and three remote machines,
   and shows the first three remote machines to join; the others are in
   the game all the same. Finishing places past 16th, which the game's
@@ -150,13 +175,23 @@ limits: every change is under `#ifdef HALO_LINUX`.
 
 Several copies of the game can play together on one computer. The host
 tells machines apart by address, so every copy needs its own loopback
-address, the host included: for example
-`HALO_NET_ADDRESS=127.0.0.200` for the host, and
-`HALO_NET_ADDRESS=127.0.0.201` (`.202`, ...) with
-`HALO_NET_BROADCAST=127.0.0.200` for the others, which then find the
-host's game. Never give a copy 127.0.0.1: every copy reaches its own
-address through 127.0.0.1. Linux and Windows route all of 127.0.0.0/8 to
-the loopback interface without configuration.
+address, the host included. A copy bound to one address receives no
+broadcasts, so each lists the others in `network.broadcast`: the clients
+send their game search to the host, and the host its game advertisement
+to the clients. For a host and two clients (the environment variables
+override `config.toml`'s `[network]` for one run):
+
+```sh
+HALO_NET_ADDRESS=127.0.0.200 HALO_NET_BROADCAST=127.0.0.201,127.0.0.202 build/linux/halo
+HALO_NET_ADDRESS=127.0.0.201 HALO_NET_BROADCAST=127.0.0.200 build/linux/halo
+HALO_NET_ADDRESS=127.0.0.202 HALO_NET_BROADCAST=127.0.0.200 build/linux/halo
+```
+
+Never give a copy 127.0.0.1: every copy reaches its own address through
+127.0.0.1. Linux and Windows route all of 127.0.0.0/8 to the loopback
+interface without configuration. Pinning a machine to a network card's
+address with `network.address` works the same way: every machine must list
+the others' addresses.
 
 `tools/system_link_bots.py` fills a session without a hundred copies of the
 game. It joins a host with lightweight stand-in machines, one player each,
@@ -170,7 +205,7 @@ python tools/system_link_bots.py --host 127.0.0.200 --machines 127 --start
 ```
 
 `--start` starts the game once every stand-in is in the lobby. A host
-without `HALO_NET_ADDRESS` is found at the default `--host 127.0.0.1`.
+without `network.address` is found at the default `--host 127.0.0.1`.
 
 ## What works
 

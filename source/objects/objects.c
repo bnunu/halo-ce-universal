@@ -1765,10 +1765,20 @@ void object_reconnect_to_map(
 	}
 	else
 	{
+#ifdef HALO_LINUX
+		/* location may point here after the if below: declared inside it,
+		the location would be read after its lifetime ended, which an
+		optimising compiler is free to break (release builds crashed placing
+		objects at level start, reading a stack slot reused meanwhile) */
+		struct location bounding_sphere_location;
+
+#endif
 		if (!location)
 		{
+#ifndef HALO_LINUX
 			struct location bounding_sphere_location;
-			
+#endif
+
 			scenario_location_from_point(&bounding_sphere_location, &object->object.bounding_sphere_center);
 			location = &bounding_sphere_location;
 
@@ -3826,6 +3836,19 @@ void object_delete_immediately(
 	return;
 }
 
+#ifdef HALO_LINUX
+/* the active garbage limits are per 16 players: a session of up to 128
+keeps proportionally more garbage around, campaign and smaller games the
+Xbox's amount */
+static long active_garbage_limit(
+	long limit_per_16_players)
+{
+	long player_count = player_data ? player_data->actual_count : 0;
+
+	return limit_per_16_players * MAX(16, player_count) / 16;
+}
+
+#endif
 void objects_garbage_collection(
 	void)
 {
@@ -3852,7 +3875,11 @@ void objects_garbage_collection(
 		}
 		else
 		{
+#ifdef HALO_LINUX
+			if (object_globals->active_garbage_object_count>=active_garbage_limit(GARBAGE_LIMIT_ACTIVE_GARBAGE_TRIGGER))
+#else
 			if (object_globals->active_garbage_object_count>=GARBAGE_LIMIT_ACTIVE_GARBAGE_TRIGGER)
+#endif
 			{
 				garbage_collect_mode = _garbage_collect_active_objects;
 			}
@@ -3909,7 +3936,12 @@ void objects_garbage_collection(
 					should_collect = FALSE;
 					break;
 				case _garbage_collect_active_objects:
+#ifdef HALO_LINUX
+					should_collect = object_globals->active_garbage_object_count<=
+						active_garbage_limit(GARBAGE_LIMIT_ACTIVE_GARBAGE_TARGET);
+#else
 					should_collect = object_globals->active_garbage_object_count<=GARBAGE_LIMIT_ACTIVE_GARBAGE_TARGET;
+#endif
 					break;
 				case _garbage_collect_for_space:
 					should_collect =

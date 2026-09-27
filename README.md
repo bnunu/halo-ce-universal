@@ -1,9 +1,24 @@
-Halo 1 decomp, ported to Linux
+Halo CE Universal — Apple Silicon and iPhone
 =============
 
-This is a port of the decompilation of Halo: Combat Evolved build 2342 (`cachebeta.exe`, sha256 `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`) to Linux.
+This fork adds playable native Apple Silicon macOS and iPhone builds to
+[cybersecurity/halo-ce-universal](https://github.com/cybersecurity/halo-ce-universal).
+It builds on the decompilation of Halo: Combat Evolved build 2342
+(`cachebeta.exe`, sha256 `4cc87b45f721270392a96f1674ed2b5cd4a7bb4355faeab4531d1cf1884d9520`).
 
-<img width="1284" height="989" alt="Main_Menu_Screenshot" src="https://github.com/user-attachments/assets/92e03c85-0d96-45f5-bdd9-8e69555c996d" />
+**Start here: [Apple build setup](docs/apple-build.md)**, then follow the
+[Mac instructions](port/macos/README.md#build) or
+[iPhone instructions](port/ios/README.md#build).
+The Apple renderer uses ANGLE's Metal backend. Mac keyboard/mouse and iPhone
+touch gameplay and audio have been tested; physical iPhone gamepad play and
+the full campaign still need testing.
+
+This is a source-only repository. Supply your own original Xbox game data and
+August 2001 XDK headers locally. Game images, maps, the XDK, signing identities,
+provisioning profiles and built apps are not included. iPhone developers use
+their own Apple development team and app identifier.
+
+![Halo: Combat Evolved main menu running on Apple Silicon macOS](docs/images/main-menu.png)
 
 This is based on [bnunu](https://github.com/bnunu/halo)'s decompilation project, which itself is a fork of [punpckhdq/halo](https://github.com/punpckhdq/halo).
 
@@ -16,6 +31,11 @@ This is based on [bnunu](https://github.com/bnunu/halo)'s decompilation project,
 - [Matching methodology and source-credibility rules](docs/matching_methodology.md)
 
 ## Build instructions
+
+For Apple platforms, use the [Apple build setup](docs/apple-build.md) and
+platform guides above; their scripts configure the build automatically.
+The following instructions also cover the inherited Linux, Windows, Android
+and byte-matching builds.
 
 You must source the August 2001 Xbox SDK yourself, and you need Python and [ninja-build](https://ninja-build.org/) on your PATH. Extract the `XDK/xbox` folder from the installer into the repository root such that `xbox/{bin,include}` are valid paths, then run `configure.py` from the repository root.
 
@@ -37,7 +57,7 @@ They are also optimised with profiles of the game at play, recorded by an instru
 
 With Mesa drivers the Linux build makes its GL calls through Mesa's GL thread (`mesa_glthread`), which takes them off the game's thread.
 
-Frames per second at the opening of a30, uncapped (`HALO_NO_VSYNC=1`), about 510 draws per frame; each row adds one change to the one above (Linux: a laptop with an Intel Core i7-1355U and Iris Xe graphics, median of three runs; Android: a Pixel 9 Pro XL, Tensor G4, median of three runs):
+Frames per second at the opening of a30, uncapped (`vsync = false` in `config.toml`, or `HALO_NO_VSYNC=1`), about 510 draws per frame; each row adds one change to the one above (Linux: a laptop with an Intel Core i7-1355U and Iris Xe graphics, median of three runs; Android: a Pixel 9 Pro XL, Tensor G4, median of three runs):
 
 | Change | Linux | Android |
 | --- | ---: | ---: |
@@ -56,11 +76,24 @@ Unity ("jumbo") builds, which compile many files as one, would give the compiler
 
 ### Frame rate
 
-The native builds draw a frame at every refresh of the display (60, 90, 120, 240 Hz, ...), paced by vsync, while the game still simulates at 30 Hz as on the Xbox: each frame blends the last two ticks. To see the frame rate, open the developer console (the \` key) and enter `display_framerate true`; the frames per second, averaged over half a second, appear at the bottom right of the screen. `HALO_INTERPOLATION=0` restores the original 30 frames per second. See [port/linux/README.md](port/linux/README.md#frame-rate).
+The native builds draw a frame at every refresh of the display (60, 90, 120, 240 Hz, ...), paced by vsync, while the game still simulates at 30 Hz as on the Xbox: each frame blends the last two ticks. To see the frame rate, open the developer console (the \` key) and enter `display_framerate true`; the frames per second, averaged over half a second, appear at the bottom right of the screen. `interpolation = false` in `config.toml` (written next to the executable, or in the data folder on Android, on the first run) restores the original 30 frames per second. See [port/linux/README.md](port/linux/README.md#frame-rate).
 
 ### Native Windows build
 
 `ninja windows`, run on Windows, compiles the game with clang into a native 32-bit Windows executable, `build/windows/halo.exe` (with `SDL3.dll`), sharing the Linux build's platform layer. It needs LLVM, Python and ninja, plus Visual Studio's x86 C++ libraries and a Windows SDK. Put the game data under `assets/` as for Linux. See [port/windows/README.md](port/windows/README.md).
+
+### iPhone development build
+
+The experimental iPhone port targets iOS 26+ with signed ARM game code, a
+Metal-backed renderer, touch controls and gamepad support. See
+[port/ios/README.md](port/ios/README.md) for the Xcode build and device signing.
+
+### Apple Silicon macOS build
+
+`python3 tools/macos_build.py` builds a native ARM64 Mac app using ANGLE's Metal
+backend. Campaign gameplay, mouse capture, and audio have been confirmed on an
+M5 Mac. See [port/macos/README.md](port/macos/README.md) for dependency setup,
+launch instructions, validation limits, and the next performance phase.
 
 ### Android build
 

@@ -1016,7 +1016,11 @@ static void cache_files_open_cache_files(
 			char *cache_map_name = cached_map_file_get(map_file_index)->header.name;
 
 			cached_map_file_read_header(map_file_index);
-			if (strcmp(map_file->header.build, CACHE_FILE_BUILD_STRING) != 0)
+			if (strcmp(map_file->header.build, CACHE_FILE_BUILD_STRING) != 0
+#ifdef HALO_LINUX
+				&& strcmp(map_file->header.build, "01.10.12.2276") != 0
+#endif
+				)
 			{
 				valid = FALSE;
 			}
