@@ -335,7 +335,8 @@ struct gl_device
 	unsigned long index_offset;
 	GLuint samplers[D3DTSS_MAXSTAGES];
 
-	GLuint queries[VISIBILITY_TEST_SLOTS];
+	/* One extra query is scratch space; result slot zero belongs to the game. */
+	GLuint queries[VISIBILITY_TEST_SLOTS + 1];
 	BOOL query_pending[VISIBILITY_TEST_SLOTS];
 #ifdef HALO_MACOS
 	GLuint query_results[VISIBILITY_TEST_SLOTS];
@@ -938,7 +939,7 @@ static void gl_initialize(void)
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
 #endif
 	glGenSamplers(D3DTSS_MAXSTAGES, device.samplers);
-	glGenQueries(VISIBILITY_TEST_SLOTS, device.queries);
+	glGenQueries(VISIBILITY_TEST_SLOTS + 1, device.queries);
 #ifndef HALO_ANDROID
 	glGenBuffers(1, &device.visibility_results_buffer);
 	glBindBuffer(GL_QUERY_BUFFER, device.visibility_results_buffer);
@@ -1378,7 +1379,7 @@ void WINAPI D3DDevice_BeginVisibilityTest(void)
 		return;
 	}
 #endif
-	glBeginQuery(VISIBILITY_QUERY, device.queries[0]);
+	glBeginQuery(VISIBILITY_QUERY, device.queries[VISIBILITY_TEST_SLOTS]);
 }
 
 HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
@@ -1389,8 +1390,6 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 		return S_OK;
 	device.visibility_test_active = FALSE;
 	index %= VISIBILITY_TEST_SLOTS;
-	if (!index)
-		index = 1;
 #ifdef HALO_ANDROID
 	if (xgpu_capabilities.atomic_counters)
 	{
@@ -1405,8 +1404,8 @@ HRESULT WINAPI D3DDevice_EndVisibilityTest(DWORD index)
 #endif
 	device.query_area[index] = target_scale[0] * target_scale[1];
 	/* swap the scratch query into the requested slot */
-	scratch = device.queries[0];
-	device.queries[0] = device.queries[index];
+	scratch = device.queries[VISIBILITY_TEST_SLOTS];
+	device.queries[VISIBILITY_TEST_SLOTS] = device.queries[index];
 	device.queries[index] = scratch;
 	device.query_pending[index] = TRUE;
 #ifndef HALO_ANDROID
@@ -1438,8 +1437,6 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	if (time_stamp)
 		*time_stamp = 0;
 	index %= VISIBILITY_TEST_SLOTS;
-	if (!index)
-		index = 1;
 	if (!device.gl_ready || !device.query_pending[index])
 	{
 		if (result)

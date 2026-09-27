@@ -77,6 +77,7 @@ the local app is ad-hoc signed automatically. For compiler/runtime checks:
 ```sh
 python3 tools/test_macos_runtime.py
 python3 -m unittest tools.test_macos_preflight
+python3 -m unittest tools.test_visibility_queries
 ```
 
 The shared settings are read from `config.toml` in the save directory, with
