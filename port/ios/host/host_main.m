@@ -64,6 +64,10 @@ int main(int argc, char **argv) {
         snprintf(save_root, sizeof(save_root), "%s", saves.fileSystemRepresentation);
         freopen([[saves stringByAppendingPathComponent:@"halo.log"] fileSystemRepresentation], "w", stderr);
         setbuf(stderr, NULL);
+        // A sandbox-relative shortcut for opt-in device frame profiling.
+        const char *profile = getenv("HALO_PERF_LOG");
+        if (profile && !strcmp(profile, "1"))
+            setenv("HALO_PERF_LOG", [[saves stringByAppendingPathComponent:@"frames.csv"] fileSystemRepresentation], 1);
         if (![files fileExistsAtPath:[data stringByAppendingPathComponent:@"maps/ui.map"]])
             host_fatal("Copy your Xbox Halo maps folder into Halo's GameData folder using Files or Finder, then reopen the app.");
     }

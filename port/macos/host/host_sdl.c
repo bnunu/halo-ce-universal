@@ -95,6 +95,13 @@ int64_t host_sdl_thread_id(void) { return (int64_t)SDL_GetCurrentThreadID(); }
 
 /* ---------- video */
 
+#if defined(HALO_IOS) && !defined(HALO_IOS_MAC_CHECK)
+/* SDL already requests the display's maximum rate through CADisplayLink.
+   Its public callback API replaces that link for the optional 60 Hz mode.
+   ANGLE's drawable/vsync wait still paces the game's main loop. */
+static void SDLCALL ios_refresh_hint(void *unused) { (void)unused; }
+#endif
+
 uint32_t host_sdl_create_window(const char *title, int width, int height, int64_t flags) {
     (void)flags;
     const char *windowed = SDL_getenv("HALO_WINDOWED");
@@ -104,6 +111,23 @@ uint32_t host_sdl_create_window(const char *title, int width, int height, int64_
                                     mode);
     if (metal_window) {
         SDL_SyncWindow(metal_window);
+#if defined(HALO_IOS) && !defined(HALO_IOS_MAC_CHECK)
+        const SDL_DisplayMode *display = SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(metal_window));
+        const char *rate = SDL_getenv("HALO_IOS_REFRESH_RATE");
+        int maximum = display ? (int)SDL_roundf(display->refresh_rate) : 60;
+        int requested = maximum;
+        if (rate && !SDL_strcmp(rate, "60")) {
+            int interval = SDL_max(1, maximum / 60);
+            if (SDL_SetiOSAnimationCallback(metal_window, interval, ios_refresh_hint, NULL))
+                requested = maximum / interval;
+            else
+                host_logf(HOST_LOG_WARN, "Cannot request 60 Hz: %s", SDL_GetError());
+        } else if (rate && SDL_strcmp(rate, "120")) {
+            host_logf(HOST_LOG_WARN, "HALO_IOS_REFRESH_RATE accepts 60 or 120; using display maximum");
+        }
+        host_logf(HOST_LOG_INFO, "iOS refresh request %d Hz; display maximum %d Hz (system may reduce rate)",
+                  requested, maximum);
+#endif
         int w, h;
         SDL_GetWindowSizeInPixels(metal_window, &w, &h);
         host_logf(HOST_LOG_INFO, "Metal drawable %dx%d (%s)", w, h,
