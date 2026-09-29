@@ -207,3 +207,24 @@ Launchers from 1.2 on read `releases/latest/download/launcher.txt` when they
 open and offer anything newer than themselves. Setting
 `HALO_LAUNCHER_UPDATES` to the address of another `launcher.txt` (https, or
 a local test server) tries a release before it is published.
+
+## The pre-update launcher
+
+`build-exe.cmd pre-update` builds the launcher's other edition, *Halo CE
+Universal pre-update* (`HaloLauncherPreUpdate.exe`, `PRE_UPDATE` defined): it
+sets the game up from https://github.com/bnunu/halo-ce-universal, the fork
+where changes land before they go upstream, instead of this repository. It
+installs beside the other launcher and never takes that one's install for
+its own: its folder (`%LOCALAPPDATA%\HaloCEUniversalPreUpdate`), its
+settings' header, registry keys, shortcut, entry in Windows' installed apps
+and file name are its own (the `Edition` class), and its icon's ring is
+amber. A new install turns Halo Custom Edition maps on
+(`HALO_CUSTOM_EDITION=1` among *More settings*), which the fork's builds run
+(its `docs/custom_edition_caches.md`). Both installs keep the game's saved
+profiles in the same place, `%APPDATA%\halo`.
+
+It updates itself from the release tagged `launcher-pre-update`
+(`releases/download/launcher-pre-update/launcher.txt`), never from the
+latest release, which the other launcher reads: publish its
+`HaloLauncherPreUpdate.exe` and `launcher.txt` there, as a pre-release that
+is never marked latest.

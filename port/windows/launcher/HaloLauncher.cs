@@ -1,5 +1,8 @@
 // Halo CE Universal launcher: installs, updates and starts the native Windows
-// build of https://github.com/cybersecurity/halo-ce-universal.
+// build of https://github.com/cybersecurity/halo-ce-universal. Built with
+// PRE_UPDATE defined (build-exe.cmd pre-update), it is the "Halo CE Universal
+// pre-update" launcher, which builds https://github.com/bnunu/halo-ce-universal
+// instead and installs beside the other (Edition).
 //
 // The player supplies only what cannot be downloaded: the game data from their
 // own copy of Halo: Combat Evolved for the Xbox (the PAL release, build
@@ -40,26 +43,71 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyTitle("Halo CE Universal Launcher")]
-[assembly: AssemblyProduct("Halo CE Universal Launcher")]
+[assembly: AssemblyTitle(HaloLauncher.Edition.Name + " Launcher")]
+[assembly: AssemblyProduct(HaloLauncher.Edition.Name + " Launcher")]
 // SelfUpdate compares this with the newest release's launcher.txt
 [assembly: AssemblyVersion("1.3.0.0")]
 [assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace HaloLauncher
 {
+	/* ---------- which launcher this is */
+
+	// The launcher is built in two editions. The release edition builds the
+	// game from cybersecurity/halo-ce-universal. The pre-update edition,
+	// compiled with PRE_UPDATE defined, builds it from bnunu/halo-ce-universal,
+	// the fork where changes land before they go upstream, and installs beside
+	// the release edition: everything that names an install (its folder, its
+	// settings' header, registry keys, shortcut, entry in Windows' installed
+	// apps, the launcher's file name, and the release it updates itself from)
+	// is its own, so neither edition takes the other's install for its own.
+	static class Edition
+	{
+#if PRE_UPDATE
+		public const string Name = "Halo CE Universal pre-update";
+		// the name on two lines, where one is too narrow for it
+		public const string NameFirstLine = "Halo CE Universal";
+		public const string NameSecondLine = "pre-update";
+		// in folder names and registry keys
+		public const string Id = "HaloCEUniversalPreUpdate";
+		public const string LauncherFileName = "HaloLauncherPreUpdate.exe";
+		public const string Repository = "bnunu/halo-ce-universal";
+		// a release of its own, never marked latest (the release edition
+		// reads the latest)
+		public const string LauncherUpdatePath = "/download/launcher-pre-update/launcher.txt";
+		// the icon's ring, and the second line of the name
+		public static readonly Color Accent = Color.FromArgb(0xFF, 0xB3, 0x47);
+#else
+		public const string Name = "Halo CE Universal";
+		public const string NameFirstLine = Name;
+		public const string NameSecondLine = "";
+		public const string Id = "HaloCEUniversal";
+		public const string LauncherFileName = "HaloLauncher.exe";
+		public const string Repository = "cybersecurity/halo-ce-universal";
+		public const string LauncherUpdatePath = "/latest/download/launcher.txt";
+		public static readonly Color Accent = Color.FromArgb(0xB8, 0xEC, 0xFF);
+#endif
+
+		// the running launcher's process name
+		public static string ProcessName
+		{
+			get { return Path.GetFileNameWithoutExtension(LauncherFileName); }
+		}
+	}
+
 	/* ---------- what is downloaded, and what the player's files must be */
 
 	static class Pinned
 	{
-		public const string Repository = "cybersecurity/halo-ce-universal";
+		public const string Repository = Edition.Repository;
 		public const string Branch = "main";
 		public const string RepositoryUrl = "https://github.com/" + Repository;
 		public const string SourceZipUrl = "https://codeload.github.com/" + Repository + "/zip/refs/heads/" + Branch;
 		public const string CommitApiUrl = "https://api.github.com/repos/" + Repository + "/commits/" + Branch;
 
-		// the launcher's own releases: each carries HaloLauncher.exe and
-		// launcher.txt (SelfUpdate)
+		// the launcher's own releases: each carries the launcher and
+		// launcher.txt (SelfUpdate), the pre-update edition's under a tag of
+		// its own (Edition.LauncherUpdatePath)
 		public const string LauncherReleases = "https://github.com/bnunu/halo-ce-universal/releases";
 
 		public const string PythonVersion = "3.13.15";
@@ -129,7 +177,7 @@ namespace HaloLauncher
 		public string HaloExe { get { return Path.Combine(Game, @"build\windows\halo.exe"); } }
 		public string GameLog { get { return Path.Combine(Logs, "game.log"); } }
 		public string LauncherLog { get { return Path.Combine(Logs, "launcher.log"); } }
-		public string LauncherExe { get { return Path.Combine(Root, "HaloLauncher.exe"); } }
+		public string LauncherExe { get { return Path.Combine(Root, Edition.LauncherFileName); } }
 		public string IconFile { get { return Path.Combine(Root, "HaloLauncher.ico"); } }
 		public string SettingsFile { get { return Path.Combine(Root, Settings.FileName); } }
 		// the files the last source download installed, so the next one can
@@ -144,7 +192,7 @@ namespace HaloLauncher
 			full = null;
 			root = (root ?? "").Trim().Trim('"');
 			if (root.Length == 0 || !Path.IsPathRooted(root) || root.StartsWith(@"\\"))
-				return "Choose an install folder on this PC: a full path such as C:\\Games\\Halo CE Universal.";
+				return "Choose an install folder on this PC: a full path such as C:\\Games\\" + Edition.Name + ".";
 			try
 			{
 				full = Path.GetFullPath(root).TrimEnd('\\');
@@ -179,7 +227,7 @@ namespace HaloLauncher
 				foreach (string entry in Directory.EnumerateFileSystemEntries(root))
 				{
 					string name = Path.GetFileName(entry);
-					if (name.StartsWith("HaloLauncher.exe", StringComparison.OrdinalIgnoreCase) && File.Exists(entry))
+					if (name.StartsWith(Edition.LauncherFileName, StringComparison.OrdinalIgnoreCase) && File.Exists(entry))
 						continue;
 					if (name.Equals("logs", StringComparison.OrdinalIgnoreCase) && Directory.Exists(entry) &&
 						Directory.EnumerateFileSystemEntries(entry).All(log =>
@@ -214,8 +262,8 @@ namespace HaloLauncher
 	sealed class Settings
 	{
 		public const string FileName = "launcher.ini";
-		const string Header = "# Halo CE Universal launcher settings";
-		const string RegistryKey = @"Software\HaloCEUniversal";
+		const string Header = "# " + Edition.Name + " launcher settings";
+		const string RegistryKey = @"Software\" + Edition.Id;
 
 		public string Root;
 		public string Commit = "";
@@ -243,10 +291,10 @@ namespace HaloLauncher
 		// user folder with other letters in its name gets C:\Games instead.
 		public static string DefaultRoot()
 		{
-			string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HaloCEUniversal");
+			string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Edition.Id);
 			if (local.All(c => c < 128))
 				return local;
-			return Path.Combine(Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows)), @"Games\HaloCEUniversal");
+			return Path.Combine(Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows)), @"Games\" + Edition.Id);
 		}
 
 		// whether path is this launcher's settings (and not another program's
@@ -312,6 +360,14 @@ namespace HaloLauncher
 				{
 				}
 			}
+#if PRE_UPDATE
+			else
+			{
+				// the fork's builds run Halo Custom Edition maps, which a new
+				// install turns on among its "More settings"
+				settings.Extra.Add(new KeyValuePair<string, string>("HALO_CUSTOM_EDITION", "1"));
+			}
+#endif
 			return settings;
 		}
 
@@ -2384,7 +2440,7 @@ namespace HaloLauncher
 			string text;
 			try
 			{
-				text = Util.GetText(Override.Length > 0 ? Override : Pinned.LauncherReleases + "/latest/download/launcher.txt", null);
+				text = Util.GetText(Override.Length > 0 ? Override : Pinned.LauncherReleases + Edition.LauncherUpdatePath, null);
 			}
 			catch (Exception)
 			{
@@ -2468,9 +2524,9 @@ namespace HaloLauncher
 					{
 						if (window.IsDisposed || busy())
 							return;
-						if (MessageBox.Show(window, "A new version of the Halo CE Universal launcher is available: " + release.Version +
+						if (MessageBox.Show(window, "A new version of the " + Edition.Name + " launcher is available: " + release.Version +
 							" (this is " + Current + ").\r\n\r\nUpdate it now? It takes a few seconds, then the launcher starts again.",
-							"Halo CE Universal", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
+							Edition.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes)
 							return;
 						Cursor cursor = window.Cursor;
 						window.Cursor = Cursors.WaitCursor;
@@ -2482,7 +2538,7 @@ namespace HaloLauncher
 						{
 							window.Cursor = cursor;
 							MessageBox.Show(window, "Couldn't update the launcher: " + error.Message + "\r\n\r\nDownload the new version from " +
-								Pinned.LauncherReleases + " instead.", "Halo CE Universal", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+								Pinned.LauncherReleases + " instead.", Edition.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 							return;
 						}
 						Process.Start(exe);
@@ -2647,7 +2703,7 @@ namespace HaloLauncher
 				try
 				{
 					Shortcuts.Create(folders);
-					report.Log("Added Halo CE Universal to the Start menu and the desktop.");
+					report.Log("Added " + Edition.Name + " to the Start menu and the desktop.");
 				}
 				catch (Exception error)
 				{
@@ -2660,7 +2716,7 @@ namespace HaloLauncher
 				}
 				catch (Exception error)
 				{
-					report.Log("Could not add Halo CE Universal to Windows' installed apps: " + error.Message);
+					report.Log("Could not add " + Edition.Name + " to Windows' installed apps: " + error.Message);
 				}
 			}
 			settings.Save();
@@ -2703,7 +2759,7 @@ namespace HaloLauncher
 
 	static class Shortcuts
 	{
-		const string Name = "Halo CE Universal.lnk";
+		const string Name = Edition.Name + ".lnk";
 
 		static IEnumerable<string> Places()
 		{
@@ -2770,8 +2826,8 @@ namespace HaloLauncher
 
 	static class Uninstaller
 	{
-		const string AppsKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\HaloCEUniversal";
-		const string LauncherKey = @"Software\HaloCEUniversal";
+		const string AppsKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + Edition.Id;
+		const string LauncherKey = @"Software\" + Edition.Id;
 
 		public static void Register(Folders folders, Settings settings)
 		{
@@ -2788,7 +2844,7 @@ namespace HaloLauncher
 			}
 			using (RegistryKey key = Registry.CurrentUser.CreateSubKey(AppsKey))
 			{
-				key.SetValue("DisplayName", "Halo CE Universal");
+				key.SetValue("DisplayName", Edition.Name);
 				key.SetValue("DisplayIcon", File.Exists(folders.IconFile) ? folders.IconFile : folders.LauncherExe);
 				key.SetValue("DisplayVersion", settings.Commit.Length >= 7 ? settings.Commit.Substring(0, 7) : "");
 				key.SetValue("Publisher", "halo-ce-universal (github.com/" + Pinned.Repository + ")");
@@ -2807,17 +2863,17 @@ namespace HaloLauncher
 		// launcher's own file goes a moment later).
 		public static bool Run(IWin32Window owner, Settings settings)
 		{
-			const string title = "Uninstall Halo CE Universal";
+			const string title = "Uninstall " + Edition.Name;
 			Folders folders = settings.Folders();
 			if (!settings.Exists || !Folders.IsOwn(folders.Root))
 			{
-				MessageBox.Show(owner, "Halo CE Universal isn't installed in " + folders.Root + ".", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+				MessageBox.Show(owner, Edition.Name + " isn't installed in " + folders.Root + ".", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
 				return false;
 			}
 			string tools = settings.InstalledBuildTools
 				? "\r\n\r\nMicrosoft's C++ build tools, which were installed for Halo, stay: remove \"Visual Studio Build Tools 2022\" in Windows' Settings > Apps if nothing else needs them."
 				: "";
-			if (MessageBox.Show(owner, "Remove Halo CE Universal from this PC?\r\n\r\nThis deletes the game, its tools and the copy of your game files in " +
+			if (MessageBox.Show(owner, "Remove " + Edition.Name + " from this PC?\r\n\r\nThis deletes the game, its tools and the copy of your game files in " +
 				folders.Root + ". Your saved games stay (in %APPDATA%\\halo)." + tools, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
 				return false;
 			try
@@ -2836,7 +2892,7 @@ namespace HaloLauncher
 					"uses them. Restart Windows, then uninstall again.", title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return false;
 			}
-			MessageBox.Show(owner, "Halo CE Universal was removed.", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+			MessageBox.Show(owner, Edition.Name + " was removed.", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
 			RemoveLauncherLater(folders);
 			return true;
 		}
@@ -2845,7 +2901,7 @@ namespace HaloLauncher
 		static void RequireNoOtherLauncher(Folders folders)
 		{
 			int self = Process.GetCurrentProcess().Id;
-			foreach (Process process in Process.GetProcessesByName("HaloLauncher"))
+			foreach (Process process in Process.GetProcessesByName(Edition.ProcessName))
 			{
 				bool other = false;
 				try
@@ -2858,7 +2914,7 @@ namespace HaloLauncher
 				}
 				process.Dispose();
 				if (other)
-					throw new UserError("Halo CE Universal is open in another window. Close it, then uninstall again.");
+					throw new UserError(Edition.Name + " is open in another window. Close it, then uninstall again.");
 			}
 		}
 
@@ -3008,7 +3064,7 @@ namespace HaloLauncher
 				g.TranslateTransform(size / 2f, size * 0.54f);
 				g.RotateTransform(-22);
 				float width = size * 0.84f, height = size * 0.33f;
-				using (var ring = new Pen(Color.FromArgb(0xB8, 0xEC, 0xFF), Math.Max(1.5f, size * 0.085f)))
+				using (var ring = new Pen(Edition.Accent, Math.Max(1.5f, size * 0.085f)))
 					g.DrawEllipse(ring, -width / 2, -height / 2, width, height);
 				g.Restore(state);
 			}
@@ -3111,7 +3167,7 @@ namespace HaloLauncher
 
 	static class Help
 	{
-		const string Title = "Halo CE Universal";
+		const string Title = Edition.Name;
 
 		public static void ShowControls(IWin32Window owner)
 		{
@@ -3141,7 +3197,7 @@ namespace HaloLauncher
 		public static void Show(IWin32Window owner, Folders folders)
 		{
 			MessageBox.Show(owner,
-				"Play starts Halo. You can also start it with Halo CE Universal on your desktop or in the Start menu.\r\n\r\n" +
+				"Play starts Halo. You can also start it with " + Edition.Name + " on your desktop or in the Start menu.\r\n\r\n" +
 				"Check for updates gets the newest version of the game's code and rebuilds Halo (a minute or two).\r\n\r\n" +
 				"Settings changes the window size, the mouse, the sound and the language.\r\n\r\n" +
 				"If something stops working, More > Repair Halo checks everything and builds it again. More > Open the log " +
@@ -3423,7 +3479,7 @@ namespace HaloLauncher
 				throw new CancelledError();
 			return (bool)Invoke(new Func<bool>(delegate
 			{
-				return MessageBox.Show(FindForm(), question, "Halo CE Universal", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
+				return MessageBox.Show(FindForm(), question, Edition.Name, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
 			}));
 		}
 
@@ -3839,7 +3895,7 @@ namespace HaloLauncher
 	// (changing), it replaces the game files.
 	sealed class SetupWizard : Form
 	{
-		const string Title = "Halo CE Universal Setup";
+		const string Title = Edition.Name + " Setup";
 		const int TextWidth = 540;
 		const int Welcome = 0, GamePage = 1, Ready = 2, Installing = 3, Finished = 4;
 		static readonly string[] Steps = { "Welcome", "Halo game", "Install", "Done" };
@@ -3965,8 +4021,14 @@ namespace HaloLauncher
 			// the side: what this is, and where the player is
 			var side = new Panel { Dock = DockStyle.Left, Width = 230, BackColor = Look.Dark };
 			side.Controls.Add(new PictureBox { Image = AppIcon.Draw(128), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(56, 56), Location = new Point(24, 28) });
-			side.Controls.Add(new Label { Text = "Halo CE Universal", Font = Look.Bold(12.5F), ForeColor = Look.OnDark, AutoSize = true, Location = new Point(24, 96) });
-			side.Controls.Add(new Label { Text = changing ? "Change your files" : "Setup", Font = Look.Regular(10F), ForeColor = Look.OnDarkMuted, AutoSize = true, Location = new Point(25, 122) });
+			side.Controls.Add(new Label { Text = Edition.NameFirstLine, Font = Look.Bold(12.5F), ForeColor = Look.OnDark, AutoSize = true, Location = new Point(24, 96) });
+			int stageTop = 122;
+			if (Edition.NameSecondLine.Length > 0)
+			{
+				side.Controls.Add(new Label { Text = Edition.NameSecondLine, Font = Look.Bold(10.5F), ForeColor = Edition.Accent, AutoSize = true, Location = new Point(25, stageTop) });
+				stageTop += 22;
+			}
+			side.Controls.Add(new Label { Text = changing ? "Change your files" : "Setup", Font = Look.Regular(10F), ForeColor = Look.OnDarkMuted, AutoSize = true, Location = new Point(25, stageTop) });
 			for (int i = 0; i < Steps.Length; i++)
 			{
 				stepMarks[i] = new Label { Font = Look.Symbols(10F), AutoSize = true, Location = new Point(24, 176 + i * 34) };
@@ -4086,7 +4148,7 @@ namespace HaloLauncher
 			pages[Finished] = Page(
 				Heading(changing ? "Done! Halo was rebuilt with your files" : "Halo is ready!"),
 				Paragraph(changing ? "Finish takes you back to the launcher." :
-					"Start it any time with Halo CE Universal on your desktop or in the Start menu."),
+					"Start it any time with " + Edition.Name + " on your desktop or in the Start menu."),
 				play,
 				Small("Good to know: Esc opens the game's menu, F12 frees the mouse, and a gamepad works too."),
 				controls);
@@ -4286,11 +4348,11 @@ namespace HaloLauncher
 
 		void ChangeFolder()
 		{
-			using (var dialog = new FolderBrowserDialog { Description = "Choose where to install Halo CE Universal.", ShowNewFolderButton = true })
+			using (var dialog = new FolderBrowserDialog { Description = "Choose where to install " + Edition.Name + ".", ShowNewFolderButton = true })
 			{
 				if (dialog.ShowDialog(this) != DialogResult.OK)
 					return;
-				string chosen = Folders.IsOwn(dialog.SelectedPath) ? dialog.SelectedPath : Path.Combine(dialog.SelectedPath, "HaloCEUniversal");
+				string chosen = Folders.IsOwn(dialog.SelectedPath) ? dialog.SelectedPath : Path.Combine(dialog.SelectedPath, Edition.Id);
 				string root;
 				string problem = Folders.Problem(chosen, out root);
 				if (problem != null)
@@ -4415,7 +4477,7 @@ namespace HaloLauncher
 	// After setup: Play, updates and settings; the rest is under More.
 	sealed class MainForm : Form
 	{
-		const string Title = "Halo CE Universal";
+		const string Title = Edition.Name;
 
 		Settings settings;
 		readonly Label stateLabel = new Label();
@@ -4519,7 +4581,7 @@ namespace HaloLauncher
 			moreMenu.Items.Add(developerItem);
 			busyItems.Add(developerItem);
 			moreMenu.Items.Add(new ToolStripSeparator());
-			AddItem("Uninstall Halo CE Universal...", delegate { Uninstall(); }, true);
+			AddItem("Uninstall " + Edition.Name + "...", delegate { Uninstall(); }, true);
 
 			Controls.Add(body);
 			Controls.Add(header);
@@ -5016,10 +5078,10 @@ namespace HaloLauncher
 		static extern bool AttachConsole(int processId);
 
 		public const string Usage =
-			"HaloLauncher.exe [--play]\r\n" +
-			"HaloLauncher.exe --install [--update] [--root DIR] [--data PATH] [--developer] [--clang download|DIR] [--yes] [--no-shortcuts]\r\n" +
-			"HaloLauncher.exe --check-data PATH\r\n" +
-			"HaloLauncher.exe --write-icon FILE.ico";
+			Edition.LauncherFileName + " [--play]\r\n" +
+			Edition.LauncherFileName + " --install [--update] [--root DIR] [--data PATH] [--developer] [--clang download|DIR] [--yes] [--no-shortcuts]\r\n" +
+			Edition.LauncherFileName + " --check-data PATH\r\n" +
+			Edition.LauncherFileName + " --write-icon FILE.ico";
 
 		public static int Run(Settings settings, string[] args)
 		{
@@ -5157,7 +5219,7 @@ namespace HaloLauncher
 			Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
 			Application.ThreadException += delegate(object sender, ThreadExceptionEventArgs e)
 			{
-				MessageBox.Show("Something went wrong: " + e.Exception.Message, "Halo CE Universal", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				MessageBox.Show("Something went wrong: " + e.Exception.Message, Edition.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 			};
 			var tidy = new Thread(Util.RemoveOldChecks);
 			tidy.IsBackground = true;
