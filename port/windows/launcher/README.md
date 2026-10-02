@@ -15,11 +15,13 @@ one, or a folder with the disc's files (the folder that has `maps`). The maps
 must all be one build: 01.01.14.2342 (PAL) or 01.10.12.2276 (NTSC; every US
 disc revision has the same maps). The game loads both.
 
-**A graphics chip with OpenGL 4.5, and a current driver for it.** NVIDIA's
-and AMD's since about 2010 have it, and Intel's since the 6th generation
-Core processors (about 2016); Intel's HD Graphics 4000, 4400, 4600, 5500 and
-the like do not, with any driver. The launcher can't check this before the
-game is built; see *Playing* for what happens without it.
+**A graphics chip with OpenGL 4.5, and a current driver for it**, or else
+one with Direct3D 10.1. NVIDIA's and AMD's since about 2010 have OpenGL 4.5,
+and Intel's since the 6th generation Core processors (about 2016); Intel's
+HD Graphics from 2011 to 2015 (HD Graphics 2000 to 6000 and the like) have
+no OpenGL 4.5 with any driver, but Direct3D 10.1 or later: for them the
+launcher (from 1.7) changes Halo to its Direct3D build. The launcher can't
+check this before the game is built; see *Playing*.
 
 Nothing you supply leaves your PC. The Xbox SDK (XDK) isn't needed: the
 native builds compile against the clean SDK declarations in
@@ -77,6 +79,8 @@ now** gets the newest source and rebuilds, which takes a minute or two),
 - *Open the install folder* and *Open the log*.
 - *Developer build* rebuilds without `--release`, so the game stops at the
   first failed assertion, as Bungie's debug build did.
+- *Direct3D build* changes Halo to its build for graphics without OpenGL 4.5,
+  or back (see below).
 - *Uninstall Halo CE Universal*.
 
 **Settings** sets the game's settings through their `HALO_*` environment
@@ -90,10 +94,19 @@ The game draws with OpenGL 4.5. When the PC's graphics driver doesn't give
 it that, the game keeps running without a picture: a black window that
 doesn't answer. The launcher (from 1.5) follows the game's log for its first
 seconds; when the game says that it has no picture, the launcher stops it
-and tells you why, with the PC's graphics chips and their drivers, and what
-to do: install the newest driver from the chip's maker (Intel, AMD or
-NVIDIA), or, for a chip that has no OpenGL 4.5 at all, that this PC can't
-run the game. The same goes into `launcher.log`.
+and tells you why, with the PC's graphics chips and their drivers. The same
+goes into `launcher.log`.
+
+When the reason is OpenGL 4.5 (from 1.7), the launcher offers Halo's
+**Direct3D build**: the game's OpenGL ES renderer, which ANGLE draws with
+Direct3D 11 (`configure.py --gles`, `port/windows/README.md`). On *Yes* it
+takes that build's source from https://github.com/bnunu/halo-ce-universal,
+where it was made, puts ANGLE's `libGLESv2.dll` next to the game (the 32-bit
+one of the NuGet package `Avalonia.Angle.Windows.Natives`, with its licence
+as `ANGLE-LICENSE.txt`), builds and plays. Updates then follow that
+repository. *More > Direct3D build* changes to it or back at any time. When
+the Direct3D build gets no picture either, the launcher says what it needs
+(a chip with Direct3D 10.1 or later) and to install the newest driver.
 
 The launcher also looks for a newer version of itself whenever it opens (the
 setup window too), in its releases
@@ -133,10 +146,11 @@ as it is. (*Update now* updates Halo; this updates the launcher.)
    a local whose block had ended; fixed in fef8a582), and with that fixed,
    one of the ten campaign levels (c20) still ended early in testing.
    Compiled a file at a time, all ten load; the profile-guided optimisation
-   and `-march=native` stay on.
+   and `-march=native` stay on. The Direct3D build adds `--gles`, and first
+   downloads ANGLE (above).
 
-Every download comes from its publisher over HTTPS, and Python, ninja and
-LLVM are checked against the SHA-256 pinned in `HaloLauncher.cs`. An update
+Every download comes from its publisher over HTTPS, and Python, ninja, LLVM
+and ANGLE are checked against the SHA-256 pinned in `HaloLauncher.cs`. An update
 writes only the files that changed and removes those deleted upstream, so
 ninja rebuilds only what changed.
 
@@ -172,7 +186,8 @@ same list.
 ```
 HaloLauncher.exe [--play | --uninstall]
 HaloLauncher.exe --install [--update] [--root DIR] [--data PATH]
-                 [--developer] [--clang download|DIR] [--yes] [--no-shortcuts]
+                 [--developer] [--direct3d|--opengl] [--clang download|DIR]
+                 [--yes] [--no-shortcuts]
 HaloLauncher.exe --check-data PATH
 HaloLauncher.exe --write-icon FILE.ico
 ```
@@ -182,6 +197,8 @@ installation without a window (`--yes` agrees to installing Visual Studio
 Build Tools; `--no-shortcuts` also leaves out the entry in Windows' list of
 apps; `--xdk`, which earlier launchers took, is ignored); `--check-data`
 only reports what it finds in PATH.
+`--direct3d` installs the Direct3D build, `--opengl` the usual one (both are
+`direct3d=` in `launcher.ini`).
 `--clang download` always uses the launcher's LLVM; `--clang DIR` names the
 folder with `clang.exe` and `lld-link.exe` (both are also `clang=` in
 `launcher.ini`). `--write-icon` saves the launcher's icon (`build-exe.cmd`
@@ -197,10 +214,14 @@ two map builds it installs (`source/cache/cache_files.c` lists the builds
 the game plays multiplayer with). `GameBuild.Run` has the `--lto=off`, which
 can go once full link-time optimised builds run. The build steps follow
 `port/windows/README.md`. `GameLauncher.WaitForPicture` reads two lines of
-the game's log, `OpenGL <version> on <chip>` and `running without a window`
-(`port/linux/src/sdl_platform.c` and `d3d8_gl.c`); if the game words them
-otherwise one day, the launcher only stops noticing a game without a
-picture.
+the game's log, `OpenGL <version> on <chip>` (`OpenGL OpenGL ES <version>`
+in the Direct3D build) and `running without a window`
+(`port/linux/src/sdl_platform.c` and `d3d8_gl.c`), and `cannot create an
+OpenGL context` decides whether the Direct3D build is offered; if the game
+words them otherwise one day, the launcher only stops noticing a game
+without a picture. `Pinned.Direct3DRepository` is where the Direct3D build's
+source comes from: the release edition's own repository once that has
+`configure.py --gles`.
 
 To release a new version of the launcher: raise `AssemblyVersion` and
 `AssemblyFileVersion` at the top of `HaloLauncher.cs`, run `build-exe.cmd`,
@@ -208,7 +229,7 @@ and publish a release at `Pinned.LauncherReleases` with `HaloLauncher.exe`
 and a `launcher.txt` next to it:
 
 ```
-version=1.5.0.0
+version=1.7.0.0
 sha256=<SHA-256 of HaloLauncher.exe>
 url=https://github.com/bnunu/halo-ce-universal/releases/download/<tag>/HaloLauncher.exe
 ```
