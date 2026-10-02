@@ -12,15 +12,14 @@ downloaded, and a step-by-step setup does everything else.
 European (PAL) release.** The game data from your own copy: a disc image
 (`.iso`; full dumps and `extract-xiso` images both work), an archive holding
 one, or a folder with the disc's files (the folder that has `maps`). The maps
-must all be one build: 01.01.14.2342 (PAL), the one
-`source/cache/cache_files.c` accepts, or 01.10.12.2276 (NTSC; every US disc
-revision has the same maps). For NTSC maps, setup adds their build to the
-game's two map checks in its copy of the source (see *What setup does*); the
-maps themselves load and play the same.
+must all be one build: 01.01.14.2342 (PAL) or 01.10.12.2276 (NTSC; every US
+disc revision has the same maps). The game loads both.
 
 Nothing you supply leaves your PC. The Xbox SDK (XDK) isn't needed: the
 native builds compile against the clean SDK declarations in
-`port/include/xdk` (launchers before 1.3 asked for it).
+`port/include/xdk` (launchers before 1.3 asked for it). Launchers before 1.4
+also changed the game's source so that it took NTSC maps; the game takes
+them itself now, and the launcher leaves the source as it downloads it.
 
 ## Setting it up
 
@@ -107,18 +106,11 @@ as it is. (*Update now* updates Halo; this updates the launcher.)
    `clang.exe`, `lld-link.exe` and clang's headers (about 210 MB).
 4. Downloads Python (python.org's NuGet package, a complete Python that runs
    from a folder) and ninja into its own folder.
-5. Downloads this repository's `main` branch as a zip and unpacks it, without
-   `research/`, which the build does not use, and checks that it has the
-   clean SDK declarations (`port/include/xdk`).
-6. With North American maps, adds build 01.10.12.2276 next to 01.01.14.2342
-   in `cache_file_header_verify` (`source/cache/cache_files.c`) and in
-   `cache_files_open_cache_files` (`source/cache/cache_files_windows.c`),
-   inside `#ifdef HALO_LINUX` like the rest of the port's changes, so the
-   Xbox build is untouched. It does this on every run (an update brings
-   back the original files) and not at all once the source accepts that
-   build itself.
-7. Copies the game's `maps` folders into the install folder.
-8. Runs `configure.py --release --lto=off` and `ninja windows` in the
+5. Downloads this repository's `main` branch as a zip and unpacks it, and
+   checks that it has the clean SDK declarations (`port/include/xdk`). It
+   changes nothing in the source.
+6. Copies the game's `maps` folders into the install folder.
+7. Runs `configure.py --release --lto=off` and `ninja windows` in the
    environment of `vcvarsall.bat x86` (`configure.py` downloads SDL3 itself).
    `--lto=off`: with full link-time optimisation, `configure.py`'s default,
    the compiler acts on undefined behaviour across files. First the game
@@ -185,10 +177,9 @@ builds it into the exe).
 `HaloLauncher.cs` is one file written for C# 5 (the language of the compiler
 in Windows), kept to plain ASCII (other characters are `\u` escapes, since
 that compiler may read the file in the system code page). The versions and
-SHA-256 of the downloaded tools are in its `Pinned` class; the map builds
-must follow `source/cache/cache_files.c`. `SourcePatches` has the two lines it
-changes for NTSC maps (if upstream changes them, NTSC installs stop with a
-message until it is updated), and `GameBuild.Run` the `--lto=off`, which
+SHA-256 of the downloaded tools are in its `Pinned` class, and so are the
+two map builds it installs (`source/cache/cache_files.c` lists the builds
+the game plays multiplayer with). `GameBuild.Run` has the `--lto=off`, which
 can go once full link-time optimised builds run. The build steps follow
 `port/windows/README.md`.
 
@@ -198,7 +189,7 @@ and publish a release at `Pinned.LauncherReleases` with `HaloLauncher.exe`
 and a `launcher.txt` next to it:
 
 ```
-version=1.3.0.0
+version=1.4.0.0
 sha256=<SHA-256 of HaloLauncher.exe>
 url=https://github.com/bnunu/halo-ce-universal/releases/download/<tag>/HaloLauncher.exe
 ```

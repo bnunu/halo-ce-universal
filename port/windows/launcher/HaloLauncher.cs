@@ -6,9 +6,9 @@
 //
 // The player supplies only what cannot be downloaded: the game data from their
 // own copy of Halo: Combat Evolved for the Xbox (the PAL release, build
-// 01.01.14.2342, or the NTSC release, build 01.10.12.2276, whose build it adds
-// to the game's two map checks: SourcePatches). The Xbox SDK isn't needed:
-// the native builds use the clean SDK declarations in port/include/xdk.
+// 01.01.14.2342, or the NTSC release, build 01.10.12.2276; the game loads
+// both, and the launcher leaves its source as it is). The Xbox SDK isn't
+// needed: the native builds use the clean SDK declarations in port/include/xdk.
 // Everything else comes from its official
 // source and is checked: the game's source (GitHub), Visual Studio Build Tools
 // 2022 (Microsoft, only when no Visual Studio has the x86 C++ libraries and a
@@ -46,8 +46,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle(HaloLauncher.Edition.Name + " Launcher")]
 [assembly: AssemblyProduct(HaloLauncher.Edition.Name + " Launcher")]
 // SelfUpdate compares this with the newest release's launcher.txt
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace HaloLauncher
 {
@@ -146,9 +146,9 @@ namespace HaloLauncher
 		// in place of the SDK (from upstream d9b12fd4)
 		public const string CleanSdkHeader = @"port\include\xdk\xtl.h";
 
-		// source/cache/cache_files.c accepts maps of the PAL build only; for
-		// maps of the NTSC build, the launcher adds that build to the game's
-		// checks (SourcePatches)
+		// the builds of the game data the launcher installs: the game loads
+		// maps of both (source/cache/cache_files.c lists them among the builds
+		// that play multiplayer)
 		public const string PalBuild = "01.01.14.2342";
 		public const string NtscBuild = "01.10.12.2276";
 	}
@@ -2226,81 +2226,6 @@ namespace HaloLauncher
 		}
 	}
 
-	// The game loads maps of the PAL build only: source/cache/cache_files.c
-	// and cache_files_windows.c check it. The NTSC build's maps load and play
-	// the same, so for them the launcher adds that build to both checks in its
-	// copy of the source, in the port's own HALO_LINUX code (the Xbox build is
-	// unchanged). A source that has the NTSC build already is left as it is.
-	static class SourcePatches
-	{
-		sealed class Change
-		{
-			public string File, Before, After;
-		}
-
-		static readonly Change[] Ntsc =
-		{
-			new Change
-			{
-				File = @"source\cache\cache_files.c",
-				Before = "\tif (csstrcmp(header->build, \"" + Pinned.PalBuild + "\"))\n",
-				After = "\tif (csstrcmp(header->build, \"" + Pinned.PalBuild + "\")\n" +
-					"#ifdef HALO_LINUX\n" +
-					"\t\t&& csstrcmp(header->build, \"" + Pinned.NtscBuild + "\")\n" +
-					"#endif\n" +
-					"\t\t)\n",
-			},
-			new Change
-			{
-				File = @"source\cache\cache_files_windows.c",
-				Before = "\t\t\tif (strcmp(map_file->header.build, CACHE_FILE_BUILD_STRING) != 0)\n",
-				After = "\t\t\tif (strcmp(map_file->header.build, CACHE_FILE_BUILD_STRING) != 0\n" +
-					"#ifdef HALO_LINUX\n" +
-					"\t\t\t\t&& strcmp(map_file->header.build, \"" + Pinned.NtscBuild + "\") != 0\n" +
-					"#endif\n" +
-					"\t\t\t\t)\n",
-			},
-		};
-
-		// byte for byte: the files are changed only where they are replaced
-		static readonly Encoding Bytes = Encoding.GetEncoding(28591);
-
-		// Makes the game accept maps of the NTSC build. False, with nothing
-		// changed, if the source no longer has the lines this changes.
-		public static bool AcceptNtsc(Folders folders, IReport report)
-		{
-			// the file in game, and its new text
-			var changed = new List<Tuple<string, string>>();
-			foreach (Change change in Ntsc)
-			{
-				string path = Path.Combine(folders.Game, change.File);
-				if (!File.Exists(path))
-					return false;
-				string text = Bytes.GetString(File.ReadAllBytes(path));
-				if (text.Contains("\"" + Pinned.NtscBuild + "\""))
-					continue;
-				string newline = text.Contains("\r\n") ? "\r\n" : "\n";
-				string before = change.Before.Replace("\n", newline);
-				int at = text.IndexOf(before, StringComparison.Ordinal);
-				if (at < 0 || text.IndexOf(before, at + 1, StringComparison.Ordinal) >= 0)
-					return false;
-				changed.Add(Tuple.Create(change.File,
-					text.Substring(0, at) + change.After.Replace("\n", newline) + text.Substring(at + before.Length)));
-			}
-			foreach (var file in changed)
-			{
-				string path = Path.Combine(folders.Game, file.Item1);
-				string temporary = path + ".launcher";
-				File.WriteAllBytes(temporary, Bytes.GetBytes(file.Item2));
-				File.Replace(temporary, path, null);
-				report.Log("Added the American version's build " + Pinned.NtscBuild + " to the map check in game\\" + file.Item1 + ".");
-			}
-			if (changed.Count == 0)
-				report.Log("The source accepts the American version's maps already.");
-			return true;
-		}
-	}
-
 	/* ---------- building and starting the game */
 
 	static class GameBuild
@@ -2649,18 +2574,6 @@ namespace HaloLauncher
 				{
 					throw new UserError("This version of Halo's source code has no " + Pinned.CleanSdkHeader + ", so it would need the Xbox " +
 						"development kit, which this launcher doesn't handle any more. Try again later, or look for news at " + Pinned.RepositoryUrl + ".");
-				}
-				// on every run: an update brings back the unchanged files
-				string build = data != null ? data.Build : GameData.InstalledBuild(folders.Data);
-				if (build == Pinned.NtscBuild)
-				{
-					report.Status("Making Halo accept the American version");
-					if (!SourcePatches.AcceptNtsc(folders, report))
-					{
-						throw new UserError("Halo's source code has changed where it checks the version of the game files, so this launcher " +
-							"can't make it accept the American (NTSC) version any more. Look for a newer launcher at " + Pinned.RepositoryUrl +
-							", or use the European (PAL) version of the game.");
-					}
 				}
 
 				report.Step(InstallStep.CopyFiles);
@@ -5170,8 +5083,6 @@ namespace HaloLauncher
 								report.Log(string.Format("  {0}: {1} maps", group.Key, group.Count()));
 							string problem = GameData.Problem(source.Maps);
 							report.Log(problem ?? source.Summary());
-							if (problem == null && source.Build == Pinned.NtscBuild)
-								report.Log("Installing it adds this build to the game's two map checks (source\\cache).");
 							return problem == null ? 0 : 1;
 						}
 					default:
