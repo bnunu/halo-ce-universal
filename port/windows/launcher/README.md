@@ -15,6 +15,12 @@ one, or a folder with the disc's files (the folder that has `maps`). The maps
 must all be one build: 01.01.14.2342 (PAL) or 01.10.12.2276 (NTSC; every US
 disc revision has the same maps). The game loads both.
 
+**A graphics chip with OpenGL 4.5, and a current driver for it.** NVIDIA's
+and AMD's since about 2010 have it, and Intel's since the 6th generation
+Core processors (about 2016); Intel's HD Graphics 4000, 4400, 4600, 5500 and
+the like do not, with any driver. The launcher can't check this before the
+game is built; see *Playing* for what happens without it.
+
 Nothing you supply leaves your PC. The Xbox SDK (XDK) isn't needed: the
 native builds compile against the clean SDK declarations in
 `port/include/xdk` (launchers before 1.3 asked for it). Launchers before 1.4
@@ -79,6 +85,15 @@ variables, which take precedence over its `config.toml`
 fullscreen; F11 switches to the window), mouse sensitivity and inversion,
 volume, language, the original 30 frames per second, vsync, and any other
 variable, one `NAME=value` per line.
+
+The game draws with OpenGL 4.5. When the PC's graphics driver doesn't give
+it that, the game keeps running without a picture: a black window that
+doesn't answer. The launcher (from 1.5) follows the game's log for its first
+seconds; when the game says that it has no picture, the launcher stops it
+and tells you why, with the PC's graphics chips and their drivers, and what
+to do: install the newest driver from the chip's maker (Intel, AMD or
+NVIDIA), or, for a chip that has no OpenGL 4.5 at all, that this PC can't
+run the game. The same goes into `launcher.log`.
 
 The launcher also looks for a newer version of itself whenever it opens (the
 setup window too), in its releases
@@ -181,7 +196,11 @@ SHA-256 of the downloaded tools are in its `Pinned` class, and so are the
 two map builds it installs (`source/cache/cache_files.c` lists the builds
 the game plays multiplayer with). `GameBuild.Run` has the `--lto=off`, which
 can go once full link-time optimised builds run. The build steps follow
-`port/windows/README.md`.
+`port/windows/README.md`. `GameLauncher.WaitForPicture` reads two lines of
+the game's log, `OpenGL <version> on <chip>` and `running without a window`
+(`port/linux/src/sdl_platform.c` and `d3d8_gl.c`); if the game words them
+otherwise one day, the launcher only stops noticing a game without a
+picture.
 
 To release a new version of the launcher: raise `AssemblyVersion` and
 `AssemblyFileVersion` at the top of `HaloLauncher.cs`, run `build-exe.cmd`,
@@ -189,7 +208,7 @@ and publish a release at `Pinned.LauncherReleases` with `HaloLauncher.exe`
 and a `launcher.txt` next to it:
 
 ```
-version=1.4.0.0
+version=1.5.0.0
 sha256=<SHA-256 of HaloLauncher.exe>
 url=https://github.com/bnunu/halo-ce-universal/releases/download/<tag>/HaloLauncher.exe
 ```

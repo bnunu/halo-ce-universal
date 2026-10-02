@@ -46,8 +46,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle(HaloLauncher.Edition.Name + " Launcher")]
 [assembly: AssemblyProduct(HaloLauncher.Edition.Name + " Launcher")]
 // SelfUpdate compares this with the newest release's launcher.txt
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
 
 namespace HaloLauncher
 {
@@ -998,7 +998,7 @@ namespace HaloLauncher
 			return Run(file, arguments, directory, environment, report, report.Log, null);
 		}
 
-		static void KillTree(int processId)
+		public static void KillTree(int processId)
 		{
 			try
 			{
@@ -2309,12 +2309,36 @@ namespace HaloLauncher
 
 	static class GameLauncher
 	{
+		// What the game writes to its log about its picture
+		// (port/linux/src/sdl_platform.c, d3d8_gl.c): "OpenGL 4.6.0 ... on ..."
+		// once it has one. It needs OpenGL 4.5; when the graphics driver does
+		// not give it that, it writes why and that it runs without a window,
+		// and then keeps running, with a black window that does not answer.
+		static readonly Regex HasPicture = new Regex(@": OpenGL \d");
+		const string NoPicture = "running without a window";
+		static readonly string[] Reasons = { "cannot create an OpenGL context", "OpenGL function ", "SDL_CreateWindow failed" };
+		// how long a start is followed; the game says which it is in a second
+		// or two
+		public const int PictureWait = 30000;
+
 		// halo.exe is a console program: it runs with its console hidden and
 		// its output in logs\game.log (cmd.exe holds the file, so the game
 		// keeps running if the launcher closes).
 		public static Process Start(Folders folders, Settings settings)
 		{
 			Directory.CreateDirectory(folders.Logs);
+			// (the last start's log goes, so that WaitForPicture reads only
+			// this start's)
+			try
+			{
+				File.Delete(folders.GameLog);
+			}
+			catch (IOException)
+			{
+			}
+			catch (UnauthorizedAccessException)
+			{
+			}
 			ProcessStartInfo info = new ProcessStartInfo(Path.Combine(Util.System32, "cmd.exe"),
 				"/d /s /c \"\"" + folders.HaloExe + "\" > \"" + folders.GameLog + "\" 2>&1\"");
 			info.UseShellExecute = false;
@@ -2322,6 +2346,143 @@ namespace HaloLauncher
 			info.WorkingDirectory = folders.Game;
 			settings.ApplyTo(info.EnvironmentVariables, folders);
 			return Process.Start(info);
+		}
+
+		// Follows the log of a game that just started. Null once the game has
+		// its picture, has stopped, or has said neither in time. When it says
+		// that it runs without a window, what to tell the player comes back:
+		// the caller stops the game (Util.KillTree), which would not stop by
+		// itself.
+		public static string WaitForPicture(Folders folders, Process game, int milliseconds)
+		{
+			DateTime until = DateTime.UtcNow.AddMilliseconds(milliseconds);
+			while (DateTime.UtcNow < until)
+			{
+				string log = ReadLog(folders.GameLog);
+				if (log.Contains(NoPicture))
+				{
+					string message = NoPictureMessage(log);
+					try
+					{
+						File.AppendAllText(folders.LauncherLog,
+							"---- " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + ", launcher " + Assembly.GetExecutingAssembly().GetName().Version +
+							"\r\n!! " + message.Replace("\r\n\r\n", "\r\n") + "\r\n", new UTF8Encoding(false));
+					}
+					catch (Exception)
+					{
+					}
+					return message;
+				}
+				if (HasPicture.IsMatch(log))
+					return null;
+				try
+				{
+					if (game.HasExited)
+						return null;
+				}
+				catch (InvalidOperationException)
+				{
+					return null;
+				}
+				Thread.Sleep(200);
+			}
+			return null;
+		}
+
+		// the game's log so far (cmd.exe and the game have it open)
+		static string ReadLog(string path)
+		{
+			try
+			{
+				using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+				using (var reader = new StreamReader(stream, Encoding.UTF8))
+					return reader.ReadToEnd();
+			}
+			catch (IOException)
+			{
+				return "";
+			}
+			catch (UnauthorizedAccessException)
+			{
+				return "";
+			}
+		}
+
+		static string NoPictureMessage(string log)
+		{
+			// the game's own reason, without the "halo-linux: " before it
+			string said = log.Split('\n').Select(line => line.Trim()).LastOrDefault(line => Reasons.Any(line.Contains)) ?? "";
+			foreach (string reason in Reasons)
+			{
+				int at = said.IndexOf(reason, StringComparison.Ordinal);
+				if (at > 0)
+					said = said.Substring(at);
+			}
+			var message = new StringBuilder();
+			if (said.Length == 0 || said.Contains("OpenGL"))
+			{
+				message.Append("Halo can't show its picture on this PC: the graphics driver doesn't give it OpenGL 4.5, which the game needs. " +
+					"Halo would stay a black window that doesn't answer, so the launcher stopped it.");
+			}
+			else
+			{
+				message.Append("Halo couldn't open its window on this PC, so the launcher stopped it.");
+			}
+			List<string> adapters = GraphicsAdapters();
+			if (adapters.Count > 0)
+				message.Append("\r\n\r\nThis PC's graphics: " + string.Join("; ", adapters) + ".");
+			message.Append("\r\n\r\nWhat to do:\r\n" +
+				"1. Install the newest driver from the maker of the graphics chip (Intel, AMD or NVIDIA), restart the PC, then click Play again. " +
+				"The drivers that come with Windows or with the PC are often too old.\r\n" +
+				"2. Some graphics chips have no OpenGL 4.5 with any driver: Intel's from before about 2016 (HD Graphics 4000, 4400, 4600, 5500 " +
+				"and the like), and NVIDIA's and AMD's from before 2010. Halo CE Universal can't run on those.");
+			if (said.Length > 0)
+				message.Append("\r\n\r\nThe game said: " + said);
+			return message.ToString();
+		}
+
+		// the graphics adapters Windows has drivers for, with the driver's
+		// version and date: "Intel(R) HD Graphics 4600 (driver 20.19.15.4531, 9-29-2016)"
+		static List<string> GraphicsAdapters()
+		{
+			var adapters = new List<string>();
+			try
+			{
+				using (RegistryKey display = Registry.LocalMachine.OpenSubKey(
+					@"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"))
+				{
+					if (display == null)
+						return adapters;
+					foreach (string name in display.GetSubKeyNames())
+					{
+						if (!Regex.IsMatch(name, @"^\d{4}$"))
+							continue;
+						try
+						{
+							using (RegistryKey adapter = display.OpenSubKey(name))
+							{
+								string description = adapter == null ? null : adapter.GetValue("DriverDesc") as string;
+								if (string.IsNullOrEmpty(description))
+									continue;
+								string version = adapter.GetValue("DriverVersion") as string;
+								string date = adapter.GetValue("DriverDate") as string;
+								string line = description;
+								if (!string.IsNullOrEmpty(version))
+									line += " (driver " + version + (string.IsNullOrEmpty(date) ? "" : ", " + date) + ")";
+								if (!adapters.Contains(line))
+									adapters.Add(line);
+							}
+						}
+						catch (Exception)
+						{
+						}
+					}
+				}
+			}
+			catch (Exception)
+			{
+			}
+			return adapters;
 		}
 	}
 
@@ -4344,18 +4505,50 @@ namespace HaloLauncher
 			UpdateButtons();
 		}
 
+		// whether PlayNow is following a game's start
+		bool starting;
+
 		void PlayNow()
 		{
+			if (starting)
+				return;
+			Folders folders = new Folders(settings.Root);
+			Process game;
 			try
 			{
-				GameLauncher.Start(new Folders(settings.Root), settings).Dispose();
+				game = GameLauncher.Start(folders, settings);
 			}
 			catch (Exception error)
 			{
 				MessageBox.Show(this, "Couldn't start Halo: " + error.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return;
 			}
-			Close();
+			// setup closes once the game has its picture; a game that gets
+			// none is stopped, and setup stays to say why
+			starting = true;
+			var watch = new Thread(delegate()
+			{
+				string problem = GameLauncher.WaitForPicture(folders, game, GameLauncher.PictureWait);
+				if (problem != null)
+					Util.KillTree(game.Id);
+				game.Dispose();
+				try
+				{
+					BeginInvoke(new Action(delegate
+					{
+						starting = false;
+						if (problem == null)
+							Close();
+						else
+							MessageBox.Show(this, problem, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+					}));
+				}
+				catch (InvalidOperationException)
+				{
+				}
+			});
+			watch.IsBackground = true;
+			watch.Start();
 		}
 
 		void OnClosing(object sender, FormClosingEventArgs e)
@@ -4404,6 +4597,9 @@ namespace HaloLauncher
 		readonly ProgressPanel progress = new ProgressPanel(false);
 		Process game;
 		Folders gameFolders;
+		// why the running game was stopped for having no picture, which
+		// GameExited tells the player
+		string noPicture;
 		string latestCommit;
 		bool checking;
 
@@ -4663,6 +4859,7 @@ namespace HaloLauncher
 				return;
 			}
 			gameFolders = folders;
+			noPicture = null;
 			// the handler first: a game that stops at once raises Exited as
 			// soon as events are enabled
 			game.Exited += delegate
@@ -4677,6 +4874,30 @@ namespace HaloLauncher
 			};
 			game.EnableRaisingEvents = true;
 			RefreshState();
+			// a game that gets no picture is stopped, and GameExited says why
+			Process started = game;
+			var watch = new Thread(delegate()
+			{
+				string problem = GameLauncher.WaitForPicture(folders, started, GameLauncher.PictureWait);
+				if (problem == null)
+					return;
+				try
+				{
+					BeginInvoke(new Action(delegate
+					{
+						// (not when it stopped by itself meanwhile)
+						if (game != started)
+							return;
+						noPicture = problem;
+						Util.KillTree(started.Id);
+					}));
+				}
+				catch (InvalidOperationException)
+				{
+				}
+			});
+			watch.IsBackground = true;
+			watch.Start();
 		}
 
 		void GameExited()
@@ -4686,7 +4907,14 @@ namespace HaloLauncher
 			int code = game.ExitCode;
 			game.Dispose();
 			game = null;
+			string problem = noPicture;
+			noPicture = null;
 			RefreshState();
+			if (problem != null)
+			{
+				MessageBox.Show(this, problem, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				return;
+			}
 			if (code == 0)
 				return;
 			string log = gameFolders.GameLog;
@@ -5146,8 +5374,17 @@ namespace HaloLauncher
 			// something is missing
 			if (command == "--play" && folders.GameBuilt && GameData.IsInstalled(folders.Data))
 			{
-				GameLauncher.Start(folders, settings).Dispose();
-				return 0;
+				// (it waits until the game has its picture: a game that gets
+				// none is stopped, and the player is told why)
+				using (Process game = GameLauncher.Start(folders, settings))
+				{
+					string problem = GameLauncher.WaitForPicture(folders, game, GameLauncher.PictureWait);
+					if (problem == null)
+						return 0;
+					Util.KillTree(game.Id);
+					MessageBox.Show(problem, Edition.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+					return 1;
+				}
 			}
 			// the first time, setup; after it, the launcher
 			if (!folders.GameBuilt)
