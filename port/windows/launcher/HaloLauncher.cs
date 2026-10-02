@@ -46,8 +46,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle(HaloLauncher.Edition.Name + " Launcher")]
 [assembly: AssemblyProduct(HaloLauncher.Edition.Name + " Launcher")]
 // SelfUpdate compares this with the newest release's launcher.txt
-[assembly: AssemblyVersion("1.6.0.0")]
-[assembly: AssemblyFileVersion("1.6.0.0")]
+[assembly: AssemblyVersion("1.7.0.0")]
+[assembly: AssemblyFileVersion("1.7.0.0")]
 
 namespace HaloLauncher
 {
@@ -102,8 +102,32 @@ namespace HaloLauncher
 		public const string Repository = Edition.Repository;
 		public const string Branch = "main";
 		public const string RepositoryUrl = "https://github.com/" + Repository;
-		public const string SourceZipUrl = "https://codeload.github.com/" + Repository + "/zip/refs/heads/" + Branch;
-		public const string CommitApiUrl = "https://api.github.com/repos/" + Repository + "/commits/" + Branch;
+		// The game's build for graphics without OpenGL 4.5 (configure.py
+		// --gles, which draws with Direct3D 11 through ANGLE) is in the fork,
+		// where it was made: an install that uses it takes its source from
+		// there (Settings.Repository).
+		public const string Direct3DRepository = "bnunu/halo-ce-universal";
+
+		public static string SourceZipUrl(string repository)
+		{
+			return "https://codeload.github.com/" + repository + "/zip/refs/heads/" + Branch;
+		}
+
+		public static string CommitApiUrl(string repository)
+		{
+			return "https://api.github.com/repos/" + repository + "/commits/" + Branch;
+		}
+
+		// ANGLE, for the Direct3D build: the game's build makes libEGL.dll
+		// itself and needs ANGLE's 32-bit libGLESv2.dll next to the game. The
+		// AvaloniaUI project publishes one (github.com/AvaloniaUI/angle, under
+		// ANGLE's licence, which is in the package).
+		public const string AngleVersion = "2.1.27548.20260419";
+		public const string AngleUrl = "https://api.nuget.org/v3-flatcontainer/avalonia.angle.windows.natives/2.1.27548.20260419/avalonia.angle.windows.natives.2.1.27548.20260419.nupkg";
+		public const string AngleSha256 = "76d67901097e9173d155efc4c2b7d2c8e3122f2c2e0415028eb0c88478a386f9";
+		public const string AngleLibrary = "runtimes/win-x86/native/av_libglesv2.dll";
+		public const string AngleLibrarySha256 = "1e4df6ab43cc25cdaa5405048cb1088b5ca26660adfdddaeaf88c8954464244a";
+		public const string AngleLicence = "LICENSE";
 
 		// the launcher's own releases: each carries the launcher and
 		// launcher.txt (SelfUpdate), the pre-update edition's under a tag of
@@ -267,7 +291,13 @@ namespace HaloLauncher
 
 		public string Root;
 		public string Commit = "";
+		// the repository the installed source came from ("": the edition's,
+		// as in the installs of launchers before 1.7)
+		public string Source = "";
 		public bool DeveloperBuild;
+		// The game's build for graphics without OpenGL 4.5, which draws with
+		// Direct3D 11 (GameBuild, Angle).
+		public bool Direct3D;
 		public string DataInput = "";
 		// the input the installed game data came from: choosing another one
 		// replaces it
@@ -373,6 +403,11 @@ namespace HaloLauncher
 
 		public bool Exists { get { return IsLaunchers(Path.Combine(Root, FileName)); } }
 
+		// where this install's source comes from, and where what is installed
+		// came from
+		public string Repository { get { return Direct3D ? Pinned.Direct3DRepository : Pinned.Repository; } }
+		public string InstalledRepository { get { return Source.Length > 0 ? Source : Pinned.Repository; } }
+
 		void Read(string path)
 		{
 			foreach (string line in File.ReadAllLines(path, Encoding.UTF8))
@@ -385,7 +420,9 @@ namespace HaloLauncher
 				switch (key)
 				{
 				case "commit": Commit = value; break;
+				case "source": Source = value; break;
 				case "developer_build": DeveloperBuild = value == "1"; break;
+				case "direct3d": Direct3D = value == "1"; break;
 				case "data": DataInput = value; break;
 				case "installed_data": InstalledData = value; break;
 				case "window_scale": int.TryParse(value, out WindowScale); break;
@@ -416,7 +453,9 @@ namespace HaloLauncher
 			{
 				Header,
 				"commit=" + Commit,
+				"source=" + Source,
 				"developer_build=" + (DeveloperBuild ? "1" : "0"),
+				"direct3d=" + (Direct3D ? "1" : "0"),
 				"data=" + DataInput,
 				"installed_data=" + InstalledData,
 				"window_scale=" + WindowScale.ToString(CultureInfo.InvariantCulture),
@@ -2103,18 +2142,18 @@ namespace HaloLauncher
 			return relative.StartsWith("research/", StringComparison.OrdinalIgnoreCase);
 		}
 
-		public static string LatestCommit()
+		public static string LatestCommit(string repository)
 		{
-			string sha = Util.GetText(Pinned.CommitApiUrl, "application/vnd.github.sha").Trim();
+			string sha = Util.GetText(Pinned.CommitApiUrl(repository), "application/vnd.github.sha").Trim();
 			return Regex.IsMatch(sha, "^[0-9a-f]{40}$") ? sha : null;
 		}
 
-		// Downloads the branch; the commit is the zip's comment (GitHub writes
-		// it there).
-		public static string Download(Folders folders, IReport report, out string commit)
+		// Downloads the repository's branch; the commit is the zip's comment
+		// (GitHub writes it there).
+		public static string Download(Folders folders, string repository, IReport report, out string commit)
 		{
 			string zip = Path.Combine(folders.Downloads, "source.zip");
-			Util.Download(Pinned.SourceZipUrl, zip, report, null);
+			Util.Download(Pinned.SourceZipUrl(repository), zip, report, null);
 			commit = ZipComment(zip).Trim();
 			if (!Regex.IsMatch(commit, "^[0-9a-f]{40}$"))
 				commit = "";
@@ -2254,7 +2293,7 @@ namespace HaloLauncher
 		}
 
 		// whether this version of configure.py has the option
-		static bool ConfigureHas(Folders folders, string option)
+		public static bool ConfigureHas(Folders folders, string option)
 		{
 			try
 			{
@@ -2266,11 +2305,25 @@ namespace HaloLauncher
 			}
 		}
 
-		public static void Run(Folders folders, Toolchain tools, bool developer, IReport report)
+		// what the source lacks when it has no Direct3D build
+		public const string NoDirect3D = "This version of Halo's source code has no Direct3D build. " +
+			"To go back to the usual build, open More and untick Direct3D build.";
+
+		public static void Run(Folders folders, Toolchain tools, bool developer, bool direct3D, IReport report)
 		{
 			Dictionary<string, string> environment = tools.BuildEnvironment(folders);
 			report.Status("Preparing the build");
 			string arguments = "configure.py" + (developer ? "" : " --release");
+			// The build for graphics without OpenGL 4.5: the OpenGL ES renderer,
+			// which ANGLE draws with Direct3D 11 (Angle.Install). Only the
+			// units of the game's graphics are compiled again when a build is
+			// changed to or from it.
+			if (direct3D)
+			{
+				if (!ConfigureHas(folders, "--gles"))
+					throw new UserError(NoDirect3D);
+				arguments += " --gles";
+			}
 			// Full link-time optimisation, configure.py's default, lets the
 			// compiler act on undefined behaviour in the decompiled code
 			// across files: object_reconnect_to_map (source/objects/objects.c)
@@ -2304,6 +2357,55 @@ namespace HaloLauncher
 				throw new UserError("Building Halo failed (code " + code + "). " + TryAgain);
 			if (!folders.GameBuilt)
 				throw new UserError("The build finished, but " + folders.HaloExe + " is missing.");
+		}
+	}
+
+	// ANGLE's libGLESv2.dll next to the game, which the Direct3D build draws
+	// through (Pinned.AngleUrl).
+	static class Angle
+	{
+		public static void Install(Folders folders, IReport report)
+		{
+			string directory = Path.GetDirectoryName(folders.HaloExe);
+			string library = Path.Combine(directory, "libGLESv2.dll");
+			if (File.Exists(library) && Util.Sha256(library) == Pinned.AngleLibrarySha256)
+				return;
+			report.Status("Downloading the Direct3D graphics library (ANGLE)");
+			string package = Path.Combine(folders.Downloads, "angle-" + Pinned.AngleVersion + ".nupkg");
+			Util.Download(Pinned.AngleUrl, package, report, Pinned.AngleSha256);
+			Directory.CreateDirectory(directory);
+			using (ZipArchive zip = ZipFile.OpenRead(package))
+			{
+				ZipArchiveEntry entry = zip.GetEntry(Pinned.AngleLibrary);
+				if (entry == null)
+					throw new UserError("The Direct3D graphics library's download has no " + Pinned.AngleLibrary + ", so it was not used.");
+				entry.ExtractToFile(library, true);
+				// its licence goes with it
+				ZipArchiveEntry licence = zip.GetEntry(Pinned.AngleLicence);
+				if (licence != null)
+					licence.ExtractToFile(Path.Combine(directory, "ANGLE-LICENSE.txt"), true);
+			}
+			File.Delete(package);
+			report.Log("ANGLE " + Pinned.AngleVersion + " (libGLESv2.dll) is next to the game.");
+		}
+	}
+
+	// Why a game that started has no picture.
+	sealed class PictureProblem
+	{
+		// for the player
+		public string Message;
+		// whether the game's Direct3D build would be worth a try: this build
+		// asked for OpenGL 4.5 and the graphics driver has less
+		public bool TryDirect3D;
+
+		// what to ask before the switch
+		public string Question
+		{
+			get
+			{
+				return Message + "\r\n\r\nSwitch Halo to its Direct3D build now? The launcher downloads it and builds it, which takes a few minutes.";
+			}
 		}
 	}
 
@@ -2352,10 +2454,10 @@ namespace HaloLauncher
 
 		// Follows the log of a game that just started. Null once the game has
 		// its picture, has stopped, or has said neither in time. When it says
-		// that it runs without a window, what to tell the player comes back:
-		// the caller stops the game (Util.KillTree), which would not stop by
-		// itself.
-		public static string WaitForPicture(Folders folders, Process game, int milliseconds)
+		// that it runs without a window, why comes back, for the player: the
+		// caller stops the game (Util.KillTree), which would not stop by
+		// itself. direct3D: whether the game is the Direct3D build.
+		public static PictureProblem WaitForPicture(Folders folders, Process game, int milliseconds, bool direct3D)
 		{
 			DateTime until = DateTime.UtcNow.AddMilliseconds(milliseconds);
 			while (DateTime.UtcNow < until)
@@ -2363,17 +2465,17 @@ namespace HaloLauncher
 				string log = ReadLog(folders.GameLog);
 				if (log.Contains(NoPicture))
 				{
-					string message = NoPictureMessage(log);
+					PictureProblem problem = NoPictureProblem(log, direct3D);
 					try
 					{
 						File.AppendAllText(folders.LauncherLog,
 							"---- " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + ", launcher " + Assembly.GetExecutingAssembly().GetName().Version +
-							"\r\n!! " + message.Replace("\r\n\r\n", "\r\n") + "\r\n", new UTF8Encoding(false));
+							"\r\n!! " + problem.Message.Replace("\r\n\r\n", "\r\n") + "\r\n", new UTF8Encoding(false));
 					}
 					catch (Exception)
 					{
 					}
-					return message;
+					return problem;
 				}
 				if (HasPicture.IsMatch(log))
 					return null;
@@ -2410,7 +2512,7 @@ namespace HaloLauncher
 			}
 		}
 
-		static string NoPictureMessage(string log)
+		static PictureProblem NoPictureProblem(string log, bool direct3D)
 		{
 			// the game's own reason, without the "halo-linux: " before it
 			string said = log.Split('\n').Select(line => line.Trim()).LastOrDefault(line => Reasons.Any(line.Contains)) ?? "";
@@ -2420,27 +2522,51 @@ namespace HaloLauncher
 				if (at > 0)
 					said = said.Substring(at);
 			}
+			// (the Direct3D build asks ANGLE for an OpenGL ES context, and says
+			// the same when it gets none)
+			bool graphics = said.Length == 0 || said.Contains("OpenGL");
+			var problem = new PictureProblem { TryDirect3D = graphics && !direct3D };
 			var message = new StringBuilder();
-			if (said.Length == 0 || said.Contains("OpenGL"))
+			if (!graphics)
 			{
-				message.Append("Halo can't show its picture on this PC: the graphics driver doesn't give it OpenGL 4.5, which the game needs. " +
+				message.Append("Halo couldn't open its window on this PC, so the launcher stopped it.");
+			}
+			else if (direct3D)
+			{
+				message.Append("Halo's Direct3D build can't show its picture on this PC either. " +
 					"Halo would stay a black window that doesn't answer, so the launcher stopped it.");
 			}
 			else
 			{
-				message.Append("Halo couldn't open its window on this PC, so the launcher stopped it.");
+				message.Append("Halo can't show its picture with this PC's graphics driver: it doesn't give Halo the OpenGL 4.5 it asks for. " +
+					"Halo would stay a black window that doesn't answer, so the launcher stopped it.");
 			}
 			List<string> adapters = GraphicsAdapters();
 			if (adapters.Count > 0)
 				message.Append("\r\n\r\nThis PC's graphics: " + string.Join("; ", adapters) + ".");
-			message.Append("\r\n\r\nWhat to do:\r\n" +
-				"1. Install the newest driver from the maker of the graphics chip (Intel, AMD or NVIDIA), restart the PC, then click Play again. " +
-				"The drivers that come with Windows or with the PC are often too old.\r\n" +
-				"2. Some graphics chips have no OpenGL 4.5 with any driver: Intel's from before about 2016 (HD Graphics 4000, 4400, 4600, 5500 " +
-				"and the like), and NVIDIA's and AMD's from before 2010. Halo CE Universal can't run on those.");
+			if (problem.TryDirect3D)
+			{
+				message.Append("\r\n\r\nHalo has a second build for graphics like these, which draws with Direct3D 11 instead of OpenGL. " +
+					"(The other way is a newer driver from the maker of the graphics chip, if there is one: Intel's chips from before about 2016 " +
+					"have no OpenGL 4.5 with any driver.)");
+			}
+			else if (graphics)
+			{
+				message.Append("\r\n\r\nWhat to do:\r\n" +
+					"1. Install the newest driver from the maker of the graphics chip (Intel, AMD or NVIDIA), restart the PC, then click Play again. " +
+					"The drivers that come with Windows or with the PC are often too old.\r\n" +
+					"2. The Direct3D build needs a graphics chip with Direct3D 10.1 or later: Intel's since about 2011, NVIDIA's and AMD's since " +
+					"about 2010. Halo CE Universal can't run on older ones.");
+			}
+			else
+			{
+				message.Append("\r\n\r\nWhat to do: install the newest driver from the maker of the graphics chip (Intel, AMD or NVIDIA), " +
+					"restart the PC, then click Play again.");
+			}
 			if (said.Length > 0)
 				message.Append("\r\n\r\nThe game said: " + said);
-			return message.ToString();
+			problem.Message = message.ToString();
+			return problem;
 		}
 
 		// the graphics adapters Windows has drivers for, with the driver's
@@ -2721,14 +2847,21 @@ namespace HaloLauncher
 
 				report.Step(InstallStep.GetSource);
 				string commit = settings.Commit;
-				if (updateSource || !File.Exists(Path.Combine(folders.Game, "configure.py")))
+				// (the Direct3D build's source is another repository's than the
+				// usual build's: a change of build brings its source with it)
+				string repository = settings.Repository;
+				bool otherSource = !string.Equals(repository, settings.InstalledRepository, StringComparison.OrdinalIgnoreCase);
+				if (updateSource || otherSource || !File.Exists(Path.Combine(folders.Game, "configure.py")) ||
+					(settings.Direct3D && !GameBuild.ConfigureHas(folders, "--gles")))
 				{
 					report.Status("Downloading Halo's source code");
-					string zip = SourceTree.Download(folders, report, out commit);
+					string zip = SourceTree.Download(folders, repository, report, out commit);
 					report.Status("Unpacking Halo's source code");
-					report.Log("Commit " + commit);
+					report.Log("Commit " + commit + " of " + repository);
 					SourceTree.Sync(zip, folders, report);
 					File.Delete(zip);
+					settings.Source = repository;
+					settings.Save();
 				}
 				// the native builds compile against port/include/xdk, not the Xbox
 				// SDK (whose headers earlier launchers copied to xbox\include,
@@ -2751,7 +2884,13 @@ namespace HaloLauncher
 				}
 
 				report.Step(InstallStep.Build);
-				GameBuild.Run(folders, tools, settings.DeveloperBuild, report);
+				if (settings.Direct3D)
+				{
+					if (!GameBuild.ConfigureHas(folders, "--gles"))
+						throw new UserError(GameBuild.NoDirect3D);
+					Angle.Install(folders, report);
+				}
+				GameBuild.Run(folders, tools, settings.DeveloperBuild, settings.Direct3D, report);
 				// the version is recorded only once it is built, so that a
 				// failed update is tried again
 				settings.Commit = commit;
@@ -4524,9 +4663,10 @@ namespace HaloLauncher
 			// setup closes once the game has its picture; a game that gets
 			// none is stopped, and setup stays to say why
 			starting = true;
+			bool direct3D = settings.Direct3D;
 			var watch = new Thread(delegate()
 			{
-				string problem = GameLauncher.WaitForPicture(folders, game, GameLauncher.PictureWait);
+				PictureProblem problem = GameLauncher.WaitForPicture(folders, game, GameLauncher.PictureWait, direct3D);
 				if (problem != null)
 					Util.KillTree(game.Id);
 				game.Dispose();
@@ -4537,8 +4677,10 @@ namespace HaloLauncher
 						starting = false;
 						if (problem == null)
 							Close();
-						else
-							MessageBox.Show(this, problem, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+						else if (!problem.TryDirect3D)
+							MessageBox.Show(this, problem.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+						else if (MessageBox.Show(this, problem.Question, Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+							SwitchToDirect3D();
 					}));
 				}
 				catch (InvalidOperationException)
@@ -4547,6 +4689,16 @@ namespace HaloLauncher
 			});
 			watch.IsBackground = true;
 			watch.Start();
+		}
+
+		// the Direct3D build, after the usual one got no OpenGL 4.5: built
+		// here like the install, then Play Halo again
+		void SwitchToDirect3D()
+		{
+			settings.Direct3D = true;
+			settings.Save();
+			StartInstall();
+			installHeading.Text = "Changing Halo to its Direct3D build";
 		}
 
 		void OnClosing(object sender, FormClosingEventArgs e)
@@ -4591,17 +4743,23 @@ namespace HaloLauncher
 		readonly Button moreButton = new Button();
 		readonly ContextMenuStrip moreMenu = new ContextMenuStrip();
 		readonly ToolStripMenuItem developerItem = new ToolStripMenuItem("Developer build (stops at the first failed assertion)");
+		readonly ToolStripMenuItem direct3DItem = new ToolStripMenuItem("Direct3D build (for graphics without OpenGL 4.5)");
 		readonly List<ToolStripItem> busyItems = new List<ToolStripItem>();
 		readonly ProgressPanel progress = new ProgressPanel(false);
 		Process game;
 		Folders gameFolders;
 		// why the running game was stopped for having no picture, which
 		// GameExited tells the player
-		string noPicture;
+		PictureProblem noPicture;
+		// whether the work running now ends with Play (a change of build that
+		// Play asked for)
+		bool playWhenDone;
 		string latestCommit;
 		bool checking;
 
-		public MainForm(Settings settings)
+		// switchToDirect3D: the game started from the desktop (--play) had no
+		// picture, and the player chose its Direct3D build
+		public MainForm(Settings settings, bool switchToDirect3D = false)
 		{
 			this.settings = settings;
 			Build();
@@ -4610,7 +4768,10 @@ namespace HaloLauncher
 			{
 				RefreshState();
 				ActiveControl = playButton;
-				CheckForUpdate(false);
+				if (switchToDirect3D)
+					SwitchBuild(true, true);
+				else
+					CheckForUpdate(false);
 				SelfUpdate.Offer(this, delegate { return progress.Busy || game != null; });
 			};
 			FormClosing += OnClosing;
@@ -4687,6 +4848,9 @@ namespace HaloLauncher
 			developerItem.Click += delegate { ToggleDeveloper(); };
 			moreMenu.Items.Add(developerItem);
 			busyItems.Add(developerItem);
+			direct3DItem.Click += delegate { ToggleDirect3D(); };
+			moreMenu.Items.Add(direct3DItem);
+			busyItems.Add(direct3DItem);
 			moreMenu.Items.Add(new ToolStripSeparator());
 			AddItem("Uninstall " + Edition.Name + "...", delegate { Uninstall(); }, true);
 
@@ -4722,7 +4886,8 @@ namespace HaloLauncher
 			bool data = built && GameData.IsInstalled(folders.Data);
 			bool behind = latestCommit != null && settings.Commit.Length > 0 && latestCommit != settings.Commit;
 			stateLabel.Text = running ? "Halo is running" : busy ? "Working..." : !built ? "Halo needs to be built again: More > Repair Halo"
-				: !data ? "Your game files are missing" : behind ? "An update is available" : "Ready to play";
+				: !data ? "Your game files are missing" : behind ? "An update is available"
+				: settings.Direct3D ? "Ready to play (Direct3D build)" : "Ready to play";
 			playButton.Enabled = !busy && !running && built;
 			playButton.Text = running ? "Running..." : built && !data ? "Fix game files" : "Play";
 			updateButton.Enabled = !busy && !running && !checking && built;
@@ -4749,6 +4914,7 @@ namespace HaloLauncher
 			foreach (ToolStripItem item in busyItems)
 				item.Enabled = !busy && !running;
 			developerItem.Checked = settings.DeveloperBuild;
+			direct3DItem.Checked = settings.Direct3D;
 		}
 
 		/* updates */
@@ -4759,12 +4925,13 @@ namespace HaloLauncher
 				return;
 			checking = true;
 			RefreshState();
+			string repository = settings.Repository;
 			var thread = new Thread(delegate()
 			{
 				string latest = null;
 				try
 				{
-					latest = SourceTree.LatestCommit();
+					latest = SourceTree.LatestCommit(repository);
 				}
 				catch (Exception)
 				{
@@ -4812,6 +4979,8 @@ namespace HaloLauncher
 
 		void WorkFinished(string failure)
 		{
+			bool play = playWhenDone;
+			playWhenDone = false;
 			// what went wrong stays on show, with Copy details
 			if (failure == null)
 			{
@@ -4821,6 +4990,35 @@ namespace HaloLauncher
 				CheckForUpdate(false);
 			}
 			RefreshState();
+			if (failure == null && play)
+				Play();
+		}
+
+		// Changes the game to its Direct3D build (direct3D) or back to the
+		// usual one: the source of that build, and the build. play: start the
+		// game once it is done.
+		void SwitchBuild(bool direct3D, bool play)
+		{
+			if (progress.Busy || game != null)
+				return;
+			settings.Direct3D = direct3D;
+			settings.Save();
+			RefreshState();
+			playWhenDone = play;
+			RunWork(false);
+		}
+
+		void ToggleDirect3D()
+		{
+			bool direct3D = !settings.Direct3D;
+			string question = direct3D
+				? "The Direct3D build is for PCs whose graphics have no OpenGL 4.5, such as Intel HD Graphics from before 2016: it draws " +
+					"with Direct3D 11 instead. It comes from " + Pinned.Direct3DRepository + ", where it was made.\r\n\r\nClick OK to change " +
+					"Halo to the Direct3D build now (a few minutes)."
+				: "Click OK to change Halo back to the usual build, which draws with OpenGL 4.5 (a few minutes).";
+			if (MessageBox.Show(this, question, Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
+				return;
+			SwitchBuild(direct3D, false);
 		}
 
 		// the window grows to show the progress, and shrinks back after
@@ -4874,9 +5072,10 @@ namespace HaloLauncher
 			RefreshState();
 			// a game that gets no picture is stopped, and GameExited says why
 			Process started = game;
+			bool direct3D = settings.Direct3D;
 			var watch = new Thread(delegate()
 			{
-				string problem = GameLauncher.WaitForPicture(folders, started, GameLauncher.PictureWait);
+				PictureProblem problem = GameLauncher.WaitForPicture(folders, started, GameLauncher.PictureWait, direct3D);
 				if (problem == null)
 					return;
 				try
@@ -4905,12 +5104,21 @@ namespace HaloLauncher
 			int code = game.ExitCode;
 			game.Dispose();
 			game = null;
-			string problem = noPicture;
+			PictureProblem problem = noPicture;
 			noPicture = null;
 			RefreshState();
 			if (problem != null)
 			{
-				MessageBox.Show(this, problem, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				// the Direct3D build, where the usual one got no OpenGL 4.5
+				if (problem.TryDirect3D)
+				{
+					if (MessageBox.Show(this, problem.Question, Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+						SwitchBuild(true, true);
+				}
+				else
+				{
+					MessageBox.Show(this, problem.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+				}
 				return;
 			}
 			if (code == 0)
@@ -5218,7 +5426,7 @@ namespace HaloLauncher
 
 		public const string Usage =
 			Edition.LauncherFileName + " [--play]\r\n" +
-			Edition.LauncherFileName + " --install [--update] [--root DIR] [--data PATH] [--developer] [--clang download|DIR] [--yes] [--no-shortcuts]\r\n" +
+			Edition.LauncherFileName + " --install [--update] [--root DIR] [--data PATH] [--developer] [--direct3d|--opengl] [--clang download|DIR] [--yes] [--no-shortcuts]\r\n" +
 			Edition.LauncherFileName + " --check-data PATH\r\n" +
 			Edition.LauncherFileName + " --write-icon FILE.ico";
 
@@ -5228,6 +5436,9 @@ namespace HaloLauncher
 			string command = args[0];
 			string root = null, data = null, clang = null, value = null;
 			bool developer = false, yes = false, update = false, shortcuts = true;
+			// --direct3d: the build for graphics without OpenGL 4.5; --opengl:
+			// the usual one
+			bool? direct3D = null;
 			for (int i = 1; i < args.Length; i++)
 			{
 				bool hasNext = i + 1 < args.Length;
@@ -5243,6 +5454,8 @@ namespace HaloLauncher
 				case "--data": data = hasNext ? args[++i] : null; break;
 				case "--clang": clang = hasNext ? args[++i] : null; break;
 				case "--developer": developer = true; break;
+				case "--direct3d": direct3D = true; break;
+				case "--opengl": direct3D = false; break;
 				case "--yes": yes = true; break;
 				case "--update": update = true; break;
 				case "--no-shortcuts": shortcuts = false; break;
@@ -5274,6 +5487,8 @@ namespace HaloLauncher
 				settings.DataInput = data;
 			if (developer)
 				settings.DeveloperBuild = true;
+			if (direct3D.HasValue)
+				settings.Direct3D = direct3D.Value;
 			if (clang != null)
 				settings.Clang = clang;
 			using (var report = new ConsoleReport(install ? settings.Folders().LauncherLog : null, yes))
@@ -5373,16 +5588,27 @@ namespace HaloLauncher
 			if (command == "--play" && folders.GameBuilt && GameData.IsInstalled(folders.Data))
 			{
 				// (it waits until the game has its picture: a game that gets
-				// none is stopped, and the player is told why)
+				// none is stopped, and the player is told why; the launcher's
+				// window opens to change to the Direct3D build, when the
+				// player wants it)
+				bool switchToDirect3D = false;
 				using (Process game = GameLauncher.Start(folders, settings))
 				{
-					string problem = GameLauncher.WaitForPicture(folders, game, GameLauncher.PictureWait);
+					PictureProblem problem = GameLauncher.WaitForPicture(folders, game, GameLauncher.PictureWait, settings.Direct3D);
 					if (problem == null)
 						return 0;
 					Util.KillTree(game.Id);
-					MessageBox.Show(problem, Edition.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-					return 1;
+					if (!problem.TryDirect3D)
+					{
+						MessageBox.Show(problem.Message, Edition.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+						return 1;
+					}
+					if (MessageBox.Show(problem.Question, Edition.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+						return 1;
+					switchToDirect3D = true;
 				}
+				Application.Run(new MainForm(settings, switchToDirect3D));
+				return 0;
 			}
 			// the first time, setup; after it, the launcher
 			if (!folders.GameBuilt)
