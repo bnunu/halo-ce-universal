@@ -46,8 +46,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle(HaloLauncher.Edition.Name + " Launcher")]
 [assembly: AssemblyProduct(HaloLauncher.Edition.Name + " Launcher")]
 // SelfUpdate compares this with the newest release's launcher.txt
-[assembly: AssemblyVersion("1.5.0.0")]
-[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
 
 namespace HaloLauncher
 {
@@ -2311,10 +2311,12 @@ namespace HaloLauncher
 	{
 		// What the game writes to its log about its picture
 		// (port/linux/src/sdl_platform.c, d3d8_gl.c): "OpenGL 4.6.0 ... on ..."
-		// once it has one. It needs OpenGL 4.5; when the graphics driver does
-		// not give it that, it writes why and that it runs without a window,
-		// and then keeps running, with a black window that does not answer.
-		static readonly Regex HasPicture = new Regex(@": OpenGL \d");
+		// once it has one ("OpenGL OpenGL ES 3.0 ... on ..." in a build for
+		// graphics without OpenGL 4.5, configure.py --gles). It needs OpenGL
+		// 4.5; when the graphics driver does not give it that, it writes why
+		// and that it runs without a window, and then keeps running, with a
+		// black window that does not answer.
+		static readonly Regex HasPicture = new Regex(@": OpenGL (OpenGL ES )?\d");
 		const string NoPicture = "running without a window";
 		static readonly string[] Reasons = { "cannot create an OpenGL context", "OpenGL function ", "SDL_CreateWindow failed" };
 		// how long a start is followed; the game says which it is in a second
@@ -4168,12 +4170,8 @@ namespace HaloLauncher
 				Paragraph("Your copy of Halo: Combat Evolved for the original Xbox, the American (NTSC) or European (PAL) version, copied to your PC. " +
 					"That's usually a disc image ending in .iso, or a folder with the game's files (it has a folder called maps)."),
 				Big("Halo - Combat Evolved (USA) (Rev 1).xiso.iso"),
-				Big("GOOGLE IS YOUR FRIEND"),
 				Big("Halo - Combat Evolved (USA) (Rev 2).xiso.iso"),
-				Big("GOOGLE IS YOUR FRIEND"),
-				Big("Halo - Combat Evolved (USA).xiso.iso"),
-				Big("GOOGLE IS YOUR FRIEND"),
-				Big("WE LOVE ARCHIVE.ORG", 10),
+				Big("Halo - Combat Evolved (USA).xiso.iso", 10),
 				gameStep);
 
 			var summary = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 0, 0, 12) };
