@@ -1,0 +1,93 @@
+name: macOS DMG
+
+on:
+  push:
+    paths-ignore: ['**.md']
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'port/**'
+      - 'tools/**'
+      - 'configure.py'
+      - '.github/workflows/macos-dmg.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-dmg-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dmg:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      HALO_MACOS_LLVM_BIN: /opt/homebrew/opt/llvm@22/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Public toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          brew install llvm@22 lld@22 sdl3 ninja
+          printf '%s\n' /opt/homebrew/opt/lld@22/bin >> "$GITHUB_PATH"
+      - name: Prepare dependencies
+        run: python3 tools/macos_setup.py
+      - name: Build app with no game data or automatic update credentials
+        run: >-
+          python3 tools/macos_build.py --no-data-path --sign-identity -
+          --repository "$GITHUB_REPOSITORY"
+          --build-number "$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT"
+      - name: Verify release boundaries
+        run: python3 -m unittest tools.test_macos_menu.ReleaseBoundary tools.test_macos_build tools.test_macos_release
+      - name: Create DMG
+        run: python3 tools/macos_release.py local-dmg --output dist/macos/Halo-CE-Universal-macos-arm64.dmg
+      - name: Verify download
+        run: |
+          hdiutil verify dist/macos/Halo-CE-Universal-macos-arm64.dmg
+          dmg_mount="$(mktemp -d "$RUNNER_TEMP/halo-dmg.XXXXXX")"
+          hdiutil attach dist/macos/Halo-CE-Universal-macos-arm64.dmg -mountpoint "$dmg_mount" -nobrowse -readonly
+          trap 'hdiutil detach "$dmg_mount"' EXIT
+          bundle="$dmg_mount/Halo CE Universal.app"
+          codesign --verify --deep --strict "$bundle"
+          lipo "$bundle/Contents/MacOS/halo" -verify_arch arm64
+          python3 - "$bundle" <<'PY'
+          import os
+          from pathlib import Path
+          import plistlib
+          import sys
+          from tools.macos_release import audit_bundle, audit_adhoc_signing
+
+          app = Path(sys.argv[1])
+          audit_bundle(app)
+          audit_adhoc_signing(app)
+          info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+          assert 'SUFeedURL' not in info and 'SUPublicEDKey' not in info
+          assert info['HaloMacDownloadsURL'] == f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/macos-dmg.yml"
+          build = (app / 'Contents/Resources/BuildInfo.txt').read_text()
+          assert f"Source: {os.environ['GITHUB_SHA']}\n" in build
+          output = Path('dist/macos')
+          (output / 'BuildInfo.txt').write_text(build)
+          notes = (
+              'Halo CE Universal — macOS build\n\n'
+              f"Requires Apple Silicon and macOS {info['LSMinimumSystemVersion']} or later.\n"
+              'Drag the app to Applications and supply your own Xbox Halo game data.\n'
+              'This build is ad-hoc signed, not notarized. Automatic updates are disabled.\n'
+              'Use Download Mac Builds in the Halo menu for newer repository builds.\n'
+              'macOS may block first launch; see https://support.apple.com/en-us/102445.\n\n' + build)
+          (output / 'README.txt').write_text(notes)
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
+              summary.write('Download **halo-macos-arm64-dmg** from this run’s Artifacts.\n\n' + notes)
+          PY
+          (cd dist/macos && shasum -a 256 Halo-CE-Universal-macos-arm64.dmg > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: halo-macos-arm64-dmg
+          path: dist/macos/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

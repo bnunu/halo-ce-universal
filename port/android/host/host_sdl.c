@@ -132,6 +132,19 @@ int host_sdl_set_relative_mouse(uint32_t window, int enabled)
 	return object ? SDL_SetWindowRelativeMouseMode(object, enabled != 0) : 0;
 }
 
+void host_sdl_window_size(uint32_t window, int *width, int *height)
+{
+	SDL_Window *object = handle_get(window, _handle_window);
+	*width = *height = 0;
+	if (object) SDL_GetWindowSize(object, width, height);
+}
+
+void host_sdl_warp_mouse(uint32_t window, float x, float y)
+{
+	SDL_Window *object = handle_get(window, _handle_window);
+	if (object) SDL_WarpMouseInWindow(object, x, y);
+}
+
 int host_sdl_gl_set_attribute(int attribute, int value)
 {
 	return SDL_GL_SetAttribute((SDL_GLAttr)attribute, value);

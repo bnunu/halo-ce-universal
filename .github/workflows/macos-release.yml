@@ -1,0 +1,89 @@
+name: Publish signed macOS update
+
+# Deliberately separate from credential-free CI downloads and the existing
+# Windows/Linux/Android release workflow. No release is published on push.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Mac display version (for example 0.1.0)'
+        required: true
+        default: '0.1.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-signed-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: macos-release
+    permissions:
+      contents: write
+    env:
+      HALO_MACOS_LLVM_BIN: /opt/homebrew/opt/llvm@22/bin
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_BUILD: ${{ github.run_number }}.${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate committed repository and public key
+        run: python3 tools/macos_release.py check-config --repository "$GITHUB_REPOSITORY"
+      - name: Public toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          brew install llvm@22 lld@22 sdl3 ninja
+          printf '%s\n' /opt/homebrew/opt/lld@22/bin >> "$GITHUB_PATH"
+          python3 tools/macos_setup.py
+      - name: Check release logic
+        run: python3 -m unittest tools.test_macos_release tools.test_macos_menu.ReleaseBoundary tools.test_macos_build
+      - name: Import existing signing credentials
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_PRIVATE_KEY: ${{ secrets.MACOS_NOTARY_PRIVATE_KEY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: >-
+          python3 tools/macos_release.py prepare-ci-signing "$RUNNER_TEMP/halo-macos-signing"
+          --repository "$GITHUB_REPOSITORY"
+      - name: Build, notarize and sign update
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: >-
+          python3 tools/macos_release.py build --version "$RELEASE_VERSION"
+          --build-number "$RELEASE_BUILD" --sign-identity "$MACOS_SIGN_IDENTITY"
+          --notary-profile halo-macos-release --repository "$GITHUB_REPOSITORY"
+      - name: Preserve prepared update
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-macos-${{ env.RELEASE_BUILD }}
+          path: |
+            build/macos/releases/${{ env.RELEASE_BUILD }}/*.dmg
+            build/macos/releases/${{ env.RELEASE_BUILD }}/release.json
+            build/macos/releases/${{ env.RELEASE_BUILD }}/appcast.xml
+            build/macos/releases/${{ env.RELEASE_BUILD }}/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Publish versioned Mac archive, then signed feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: >-
+          python3 tools/macos_release.py publish-github "build/macos/releases/$RELEASE_BUILD"
+          --repository "$GITHUB_REPOSITORY"
+      - name: Remove signing credentials
+        if: always()
+        run: python3 tools/macos_release.py cleanup-ci-signing "$RUNNER_TEMP/halo-macos-signing"
