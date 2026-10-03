@@ -523,6 +523,19 @@ class CommunityMapTests(unittest.TestCase):
         result = subprocess.run([str(self.capacity)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_capacity_header_resolves_with_windows_include_paths(self):
+        # Windows deliberately omits port/linux/include: its CRT shims must
+        # not shadow Windows' own headers. Check the production directive
+        # without the extra include directory used by the host fixtures.
+        source = (GAME / "custom_edition_maps.c").read_text()
+        directive = re.search(r'(?m)^#include "[^"\n]*halo_port_capacity\.h"$', source)[0]
+        result = subprocess.run([
+            self.compiler, "-E", "-x", "c", "-",
+            f"-I{ROOT / 'port/windows/include'}", "-iquote", str(GAME)],
+            input=directive + "\n#if HALO_PORT_MULTIPLAYER_CACHE_SIZE != 0x08000000\n#error capacity\n#endif\n",
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

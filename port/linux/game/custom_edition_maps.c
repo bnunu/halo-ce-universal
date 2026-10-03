@@ -37,7 +37,7 @@ in lines of about 20 characters.
 #include "cache_file_formats.h"
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
-#include "halo_port_capacity.h"
+#include "../include/halo_port_capacity.h"
 
 #include <stdio.h>
 #include <stdlib.h>

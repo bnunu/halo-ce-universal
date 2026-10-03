@@ -362,7 +362,7 @@ changed:
 
 ### Automated tests
 
-`python -m unittest tools.test_custom_edition_maps` (11 tests; needs a C
+`python -m unittest tools.test_custom_edition_maps` (12 tests; needs a C
 compiler) compiles the production map registry, cache format reader, BMP
 reader, and the relevant CE/header/cache-slot/selection functions with
 undefined-behavior traps. Synthetic headers cover CE-off Xbox discovery,
