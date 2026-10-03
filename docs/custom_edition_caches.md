@@ -77,6 +77,10 @@ the original thirteen maps stay first, followed by unique community names
 in alphabetical order. The selector, pregame lobby, and game browser share
 these names and the optional pictures/descriptions below.
 
+This discovery is available in the existing native Windows, Linux, and
+Android builds. The separate [macOS port (#4)](https://github.com/bnunu/halo-ce-universal/pull/4)
+can use the same map support after its integration.
+
 Xbox community maps must have matching file/header names (up to 31
 characters), a recognized retail build, a multiplayer scenario, valid tag
 ranges within the existing **22 MiB tag arena**, and a decompressed size
