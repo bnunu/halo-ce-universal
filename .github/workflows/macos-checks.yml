@@ -1,0 +1,47 @@
+name: macOS regression checks
+
+on:
+  push:
+    paths: ['source/**', 'port/**', 'tools/**', 'configure.py', '.github/workflows/macos-checks.yml']
+  pull_request:
+    paths: ['source/**', 'port/**', 'tools/**', 'configure.py', '.github/workflows/macos-checks.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      HALO_MACOS_LLVM_BIN: /opt/homebrew/opt/llvm@22/bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Public toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          brew install llvm@22 lld@22 sdl3 ninja
+          printf '%s\n' /opt/homebrew/opt/lld@22/bin >> "$GITHUB_PATH"
+      - name: Prepare dependencies and compiler adapter
+        run: |
+          python3 tools/macos_setup.py
+          python3 tools/macos_build.py --plugin-only
+      - name: Mac ABI, memory, networking and audio
+        run: python3 tools/test_macos_runtime.py --standalone
+      - name: Renderer, build and updater regressions
+        run: >-
+          python3 -m unittest tools.test_visibility_queries tools.test_geometry_cache
+          tools.test_texture_border tools.test_macos_preflight tools.test_macos_build tools.test_macos_clock
+          tools.test_macos_gl_stubs tools.test_macos_release
+      - name: Native data import and package boundaries
+        run: python3 tools/test_macos_menu.py
+      - name: Native settings keep the game loop running
+        run: python3 tools/test_macos_menu.py --check-ui

@@ -677,6 +677,9 @@ struct widget_instance;
 #include "text/text_group.h"
 #include "text/unicode.h"
 #include "ui_widget.h"
+#ifdef HALO_MACOS
+#include "port_config.h"
+#endif
 #include "custom_edition_maps.h"
 
 /* ---------- constants */
@@ -3986,6 +3989,10 @@ void draw_string_and_hack_in_icons(
 void ui_start_main_menu_music(
 	void)
 {
+#ifdef HALO_MACOS
+	if (!config_boolean("audio.menu_music"))
+		return;
+#endif
 	if (!widget_globals.main_menu_music_active && !main_menu_fade_active())
 	{
 		long sound_definition_index = tag_loaded(LOOPING_SOUND_DEFINITION_TAG, "sound\\music\\title1\\title1");

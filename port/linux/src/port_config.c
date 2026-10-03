@@ -119,6 +119,11 @@ static const struct config_setting config_settings[] =
 		"Play sound." },
 	{ "audio.volume", _config_real, "1.0", "HALO_VOLUME", _environment_value, _platform_all,
 		"The volume of everything, 0.0 to 1.0." },
+#ifdef HALO_MACOS
+	{ "audio.menu_music", _config_boolean, "true", NULL, _environment_value, _platform_all,
+		"Play the main menu title music. False keeps menu effects and gameplay\n"
+		"audio enabled. Restart the game after changing this setting." },
+#endif
 
 	{ "input.mouse_sensitivity", _config_real, "1.0", "HALO_MOUSE_SENSITIVITY", _environment_value, _platform_desktop,
 		"How far the view turns for the mouse's movement." },
@@ -283,7 +288,9 @@ static const struct config_setting config_settings[] =
 
 #define NUMBER_OF_CONFIG_SETTINGS (sizeof(config_settings) / sizeof(config_settings[0]))
 
-#if defined(HALO_ANDROID)
+#if defined(HALO_MACOS)
+#define CONFIG_PLATFORM _platform_desktop
+#elif defined(HALO_ANDROID)
 #define CONFIG_PLATFORM _platform_android
 #elif defined(_WIN32)
 #define CONFIG_PLATFORM _platform_windows
@@ -307,7 +314,12 @@ static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void config_path(char *path, size_t size)
 {
-#ifdef HALO_ANDROID
+#ifdef HALO_MACOS
+	/* The app bundle is read-only; keep preferences with the user's saves. */
+	const char *root = getenv("HALO_SAVE_ROOT");
+
+	snprintf(path, size, "%s/config.toml", root && *root ? root : ".");
+#elif defined(HALO_ANDROID)
 	/* the data folder, which the app names (port/android/host/host_main.c) */
 	const char *root = getenv("HALO_DATA_ROOT");
 
@@ -437,19 +449,22 @@ static void config_append_setting(struct config_text *text, const struct config_
 	}
 #ifndef HALO_ANDROID
 	/* (Android apps have no environment to set) */
-	switch (setting->environment_style)
+	if (setting->environment)
 	{
-	case _environment_value:
-		snprintf(buffer, sizeof(buffer), "# (for one run: %s=<value>)\n", setting->environment);
-		break;
-	case _environment_set_is_true:
-		snprintf(buffer, sizeof(buffer), "# (for one run: %s=1 makes it true)\n", setting->environment);
-		break;
-	case _environment_set_is_false:
-		snprintf(buffer, sizeof(buffer), "# (for one run: %s=1 makes it false)\n", setting->environment);
-		break;
+		switch (setting->environment_style)
+		{
+		case _environment_value:
+			snprintf(buffer, sizeof(buffer), "# (for one run: %s=<value>)\n", setting->environment);
+			break;
+		case _environment_set_is_true:
+			snprintf(buffer, sizeof(buffer), "# (for one run: %s=1 makes it true)\n", setting->environment);
+			break;
+		case _environment_set_is_false:
+			snprintf(buffer, sizeof(buffer), "# (for one run: %s=1 makes it false)\n", setting->environment);
+			break;
+		}
+		config_append(text, buffer);
 	}
-	config_append(text, buffer);
 #endif
 	snprintf(buffer, sizeof(buffer), "%s = %s\n", dot + 1, setting->default_value);
 	config_append(text, buffer);
@@ -763,7 +778,7 @@ static void config_load(void)
 	for (index = 0; index < NUMBER_OF_CONFIG_SETTINGS; index++)
 	{
 		const struct config_setting *setting = &config_settings[index];
-		const char *environment = getenv(setting->environment);
+		const char *environment = setting->environment ? getenv(setting->environment) : NULL;
 
 		if (!environment)
 			continue;

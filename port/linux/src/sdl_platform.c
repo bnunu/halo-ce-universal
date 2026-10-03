@@ -15,6 +15,9 @@ and the debug keyboard that the game's console reads.
 #include "port_config.h"
 #include "p2p.h"
 #include "xiso.h"
+#ifdef HALO_MACOS
+#include "../../macos/native_events.h"
+#endif
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -33,7 +36,7 @@ static struct platform_input_state input_state;
 /* keys pressed since the last read, so a press and release between two
 reads still counts as a press (input injected on Android, or a slow frame) */
 static unsigned char keys_pressed[SDL_SCANCODE_COUNT];
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 /* the menus' pointer (platform_ui_pointer_set_active), under input_lock */
 static struct platform_ui_pointer ui_pointer;
 static float ui_pointer_wheel;
@@ -395,7 +398,11 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 
 #ifdef HALO_ANDROID
 	platform_window = SDL_CreateWindow("Halo", (int)(width * scale), (int)(height * scale),
-		SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN);
+		SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN
+#ifdef HALO_MACOS
+		| (config_boolean("debug.hidden_window") ? SDL_WINDOW_HIDDEN : 0)
+#endif
+		);
 #else
 	/* fullscreen at the desktop's resolution unless display.fullscreen is
 	false, where the game draws the display's shape at its resolution
@@ -433,7 +440,7 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 	platform_mouse_capture(TRUE);
 #endif
 	return TRUE;
@@ -502,6 +509,28 @@ void platform_mouse_capture(BOOL capture)
 	if (platform_window)
 		SDL_SetWindowRelativeMouseMode(platform_window, capture ? true : false);
 }
+
+#ifdef HALO_MACOS
+/* Called with input_lock held. A native panel must not leave queued or held
+ * gameplay input behind, even if the OS never delivers its key-up events. */
+static void platform_native_input_clear(void)
+{
+	memset(input_state.keys, 0, sizeof(input_state.keys));
+	memset(keys_pressed, 0, sizeof(keys_pressed));
+	memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
+	input_state.mouse_dx = input_state.mouse_dy = input_state.mouse_wheel = 0.0f;
+	keystroke_head = keystroke_count = 0;
+	ui_pointer.left_clicks = ui_pointer.right_clicks = ui_pointer.wheel_steps = 0;
+	ui_pointer_wheel = 0.0f;
+}
+
+static void platform_native_mouse_release(void)
+{
+	platform_native_input_clear();
+	input_state.mouse_released = TRUE;
+	platform_mouse_capture(FALSE);
+}
+#endif
 
 /* ---------- keyboard translation */
 
@@ -683,7 +712,7 @@ static void platform_invite_clipboard(BOOL look)
 	static char seen[256];
 	const char *invite = p2p_take_clipboard_text();
 
-	if (invite)
+	if (invite && !*config_string("debug.network_test"))
 	{
 		SDL_SetClipboardText(invite);
 		snprintf(seen, sizeof(seen), "%s", invite);
@@ -855,7 +884,7 @@ void platform_pump_events(void)
 #endif
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 			/* in the menus the mouse moves the pointer, not the view */
 			if (input_state.ui_pointer)
 			{
@@ -870,7 +899,7 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP:
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 			/* clicks in the menus go to the pointer; a button held down
 			when the menu closes stays up until pressed again, so the click
 			that resumes the game does not also fire */
@@ -886,6 +915,18 @@ void platform_pump_events(void)
 				{
 					ui_pointer.right_clicks++;
 				}
+				break;
+			}
+#endif
+#ifdef HALO_MACOS
+			/* The first click after returning from a native panel captures the
+			 * mouse; it must never also fire a weapon. */
+			if (input_state.mouse_released)
+			{
+				platform_native_input_clear();
+				if (event.button.down && event.button.button == SDL_BUTTON_LEFT &&
+					SDL_SetWindowRelativeMouseMode(platform_window, true))
+					input_state.mouse_released = FALSE;
 				break;
 			}
 #endif
@@ -909,7 +950,7 @@ void platform_pump_events(void)
 				}
 				break;
 			}
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 			if (input_state.ui_pointer)
 			{
 				/* whole notches: smooth-scrolling wheels send fractions */
@@ -930,8 +971,12 @@ void platform_pump_events(void)
 			input_state.mouse_wheel += event.wheel.y;
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
+#ifdef HALO_MACOS
+			platform_native_mouse_release();
+#else
 			memset(input_state.keys, 0, sizeof(input_state.keys));
 			memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
+#endif
 			input_state.focused = FALSE;
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
@@ -942,6 +987,12 @@ void platform_pump_events(void)
 				platform_mouse_capture(TRUE);
 #endif
 			break;
+#ifdef HALO_MACOS
+		case SDL_EVENT_USER:
+			if (event.user.code == HALO_MACOS_MOUSE_RELEASE)
+				platform_native_mouse_release();
+			break;
+#endif
 		case SDL_EVENT_GAMEPAD_ADDED:
 			SDL_OpenGamepad(event.gdevice.which);
 			break;
@@ -954,7 +1005,7 @@ void platform_pump_events(void)
 	platform_invite_clipboard(look_at_clipboard);
 }
 
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(HALO_MACOS)
 /* ---------- the menus' pointer */
 
 /* While a menu is up the mouse is released, its pointer shows (centered when
