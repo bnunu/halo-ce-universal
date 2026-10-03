@@ -33,6 +33,13 @@ vertices, as on the Xbox. */
 #define HALO_PORT_GAME_STATE_GPU_SIZE 0x40000 /* (0x40000) */
 #define HALO_PORT_GAME_STATE_SIZE (HALO_PORT_GAME_STATE_CPU_SIZE+HALO_PORT_GAME_STATE_GPU_SIZE)
 
+/* ---------- map files
+
+The multiplayer caches on disk may hold larger Xbox-format community maps.
+This does not enlarge the Xbox's 22 MB tag arena or change tag addresses. */
+
+#define HALO_PORT_MULTIPLAYER_CACHE_SIZE 0x08000000 /* 128 MiB (0x02F00000) */
+
 /* ---------- textures
 
 The texture cache holds the textures being drawn in 16 KB pages, 22 MB of

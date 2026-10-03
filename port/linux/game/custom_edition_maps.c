@@ -1,17 +1,18 @@
 /*
 CUSTOM_EDITION_MAPS.C
 
-The Halo Custom Edition maps in the multiplayer menus
+The community maps in the multiplayer menus
 (custom_edition_maps.h).
 
-The maps are the Custom Edition caches of multiplayer scenarios in the maps
-folder, OpenSauce's ".yelo" maps among them (custom_edition_cache_multiplayer),
-looked for whenever the level list opens. A map is offered under its file's
-name, as the level levels\test\<name>\<name> as the Xbox levels are named:
-the cache file loader finds a map by the last part of its level name. The
-game engine keeps a level name in 64 characters, so a map whose name is
-longer than 25 characters is left out, and so is a map named as one of the
-Xbox levels, which that level already offers.
+Compatible Xbox v5 multiplayer caches are always included. With Custom
+Edition enabled, its multiplayer caches and OpenSauce's ".yelo" maps are
+included too (custom_edition_cache_multiplayer). The maps are looked for
+whenever the level list opens. Xbox community maps use their bare filename
+stems (up to the header's 31 characters). CE maps retain their level names
+levels\test\<name>\<name>: the engine's 63-character limit leaves room for
+a 25-character stem. The cache loader uses the last part of either name.
+Maps named as one of the Xbox levels are left out; that level already
+offers them.
 
 A map's picture is the Windows bitmap <name>.bmp beside it, when there is one
 (bmp_files.c): the middle of it with the shape of the menus' level pictures,
@@ -33,8 +34,10 @@ in lines of about 20 characters.
 #include "bitmaps/bitmap_group.h"
 #include "cache/cache_files.h"
 #include "bmp_files.h"
+#include "cache_file_formats.h"
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
+#include "halo_port_capacity.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,7 +52,8 @@ in lines of about 20 characters.
 /* levels\test\<name>\<name> in the 63 characters the game engine's stage
 keeps of a level name (game_engine.c, struct game_engine_stage) */
 #define LEVEL_NAME_FORMAT "levels\\test\\%s\\%s"
-#define MAXIMUM_MAP_NAME_LENGTH 25
+#define MAXIMUM_CUSTOM_EDITION_MAP_NAME_LENGTH 25
+#define MAXIMUM_MAP_NAME_LENGTH 31
 
 /* The maps' display indices: beyond every string and frame of the menus'
 tags (the level names are 15 strings, the level pictures 14 frames). */
@@ -93,6 +97,7 @@ struct custom_edition_map
 	char level_name[MAXIMUM_FILENAME_LENGTH + 1];
 	wchar_t display_name[MAXIMUM_MAP_NAME_LENGTH + 1];
 	wchar_t description[MAXIMUM_DESCRIPTION_LENGTH + 1];
+	boolean xbox_cache;
 	boolean picture_read;
 	struct bitmap_data *picture;
 };
@@ -114,6 +119,16 @@ static struct custom_edition_maps_globals custom_edition_maps_globals;
 /* the description of a map without a description file, in the manner of
 the Xbox levels' */
 static wchar_t const default_description[] = L"Halo Custom\r\nEdition map";
+static wchar_t const xbox_description[] = L"Xbox community\r\nmap";
+
+/* Browser/lobby names can be requested before the selector supplies its
+level list. Stock maps must keep their tag-provided names and pictures. */
+static char const *const xbox_map_names[] =
+{
+	"beavercreek", "sidewinder", "damnation", "ratrace", "prisoner",
+	"hangemhigh", "chillout", "carousel", "boardingaction", "bloodgulch",
+	"wizard", "putput", "longest",
+};
 
 /* ---------- private code */
 
@@ -138,6 +153,11 @@ static boolean xbox_level_named(
 	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
 	short level_index;
 
+	for (level_index = 0; level_index < NUMBEROF(xbox_map_names); level_index++)
+	{
+		if (!csstrcasecmp(xbox_map_names[level_index], name))
+			return TRUE;
+	}
 	for (level_index = 0; level_index < globals->xbox_level_count; level_index++)
 	{
 		if (!csstrcasecmp(tag_name_strip_path(globals->levels[level_index]), name))
@@ -243,15 +263,71 @@ static void custom_edition_map_description_read(
 
 	if (!length)
 	{
-		csmemcpy(map->description, default_description, sizeof(default_description));
+		if (map->xbox_cache)
+			csmemcpy(map->description, xbox_description, sizeof(xbox_description));
+		else
+			csmemcpy(map->description, default_description, sizeof(default_description));
 	}
 
 	return;
 }
 
-/* Adds the map the file `name`.`extension` of the maps folder holds, when it
-is a Custom Edition multiplayer map not added yet (as a .map and a .yelo of
-one name are, which the loader reads the .map of). */
+static int xbox_map_header_read(void *context, uint32_t offset, uint32_t size, void *buffer)
+{
+	FILE *stream = context;
+
+	return fseek(stream, (long)offset, SEEK_SET) == 0 && fread(buffer, 1, size, stream) == size;
+}
+
+/* Read only a bounded header. Xbox payloads are compressed: file_length
+and tag offsets describe the decompressed cache, not the bytes on disk. */
+static boolean xbox_map_multiplayer(char const *name)
+{
+	char path[MAXIMUM_FILENAME_LENGTH + 1];
+	struct cache_file_source source;
+	struct cache_file_identity identity;
+	FILE *stream;
+	long size;
+	int length;
+	char const *character;
+	boolean valid = FALSE;
+
+	for (character = name; *character; character++)
+	{
+		if (!((*character >= 'a' && *character <= 'z') ||
+			(*character >= 'A' && *character <= 'Z') ||
+			(*character >= '0' && *character <= '9') ||
+			*character == '_' || *character == '-' || *character == ' '))
+			return FALSE;
+	}
+	length = snprintf(path, sizeof(path), "%s%s.map", cache_files_map_directory(), name);
+	if (length < 0 || length >= (int)sizeof(path))
+		return FALSE;
+	stream = fopen(path, "rb");
+	if (!stream)
+		return FALSE;
+	if (fseek(stream, 0, SEEK_END) == 0 && (size = ftell(stream)) > CACHE_FILE_HEADER_BYTES &&
+		size <= HALO_PORT_MULTIPLAYER_CACHE_SIZE)
+	{
+		source.context = stream;
+		source.read = xbox_map_header_read;
+		source.size = (uint32_t)size;
+		valid = cache_file_identify(&source, &identity) == _cache_file_status_ok &&
+			identity.format == _cache_file_format_xbox_cache && identity.scenario_type == 1 &&
+			identity.file_length > CACHE_FILE_HEADER_BYTES &&
+			identity.file_length <= HALO_PORT_MULTIPLAYER_CACHE_SIZE &&
+			identity.tag_data_offset >= CACHE_FILE_HEADER_BYTES &&
+			identity.tag_data_offset <= identity.file_length &&
+			identity.tag_data_size >= 0x24 && identity.tag_data_size <= 0x01600000 &&
+			identity.tag_data_size <= identity.file_length - identity.tag_data_offset &&
+			!csstrcasecmp(identity.name, name) && cache_files_build_region(identity.build) != NULL;
+	}
+	fclose(stream);
+	return valid;
+}
+
+/* Adds a compatible Xbox map or enabled CE map, not yet listed. Both
+loaders prefer .map over .yelo, regardless of directory enumeration order. */
 static void custom_edition_map_add(
 	char const *name,
 	char const *extension)
@@ -259,6 +335,7 @@ static void custom_edition_map_add(
 	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
 	struct custom_edition_map *map;
 	short map_index;
+	boolean xbox_cache;
 
 	if (csstrcasecmp(extension, "map") && csstrcasecmp(extension, "yelo"))
 	{
@@ -271,7 +348,7 @@ static void custom_edition_map_add(
 			return;
 		}
 	}
-	if (xbox_level_named(name) || !custom_edition_cache_multiplayer(name))
+	if (!name[0] || xbox_level_named(name))
 	{
 		return;
 	}
@@ -284,6 +361,10 @@ static void custom_edition_map_add(
 			MAXIMUM_MAP_NAME_LENGTH);
 		return;
 	}
+	xbox_cache = xbox_map_multiplayer(name);
+	if (!xbox_cache && (csstrlen(name) > MAXIMUM_CUSTOM_EDITION_MAP_NAME_LENGTH ||
+		!custom_edition_cache_multiplayer(name)))
+		return;
 	if (globals->map_count == MAXIMUM_CUSTOM_EDITION_MAPS)
 	{
 		error(
@@ -296,8 +377,12 @@ static void custom_edition_map_add(
 
 	map = &globals->maps[globals->map_count++];
 	csmemset(map, 0, sizeof(*map));
+	map->xbox_cache = xbox_cache;
 	csstrcpy(map->name, name);
-	csprintf(map->level_name, LEVEL_NAME_FORMAT, name, name);
+	if (xbox_cache)
+		csstrcpy(map->level_name, name);
+	else
+		csprintf(map->level_name, LEVEL_NAME_FORMAT, name, name);
 	display_name_make(name, map->display_name);
 	custom_edition_map_description_read(map);
 
@@ -324,11 +409,6 @@ static void custom_edition_maps_look_for(
 
 	custom_edition_maps_forget();
 	globals->looked_for = TRUE;
-	if (!halo_custom_edition_tag_cache())
-	{
-		return;
-	}
-
 	file_reference_create_from_path(&directory, cache_files_map_directory(), TRUE);
 	find_files_start(0, &directory);
 	while (find_files_next(&file, NULL))
@@ -338,7 +418,7 @@ static void custom_edition_maps_look_for(
 		custom_edition_map_add(name, extension);
 	}
 	qsort(globals->maps, globals->map_count, sizeof(globals->maps[0]), custom_edition_map_compare);
-	error(_error_silent, "custom edition: %d multiplayer maps for the level list", globals->map_count);
+	error(_error_silent, "community maps: %d multiplayer maps for the level list", globals->map_count);
 
 	return;
 }

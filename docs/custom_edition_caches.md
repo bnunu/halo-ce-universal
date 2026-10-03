@@ -70,6 +70,29 @@ controller's Back button.
 
 ### In the multiplayer menus
 
+Compatible Xbox v5 community multiplayer maps are listed even with
+`game.custom_edition = false` (the default). Put the `.map` files beside
+the retail maps before starting the game. They use the normal Xbox loader;
+the original thirteen maps stay first, followed by unique community names
+in alphabetical order. The selector, pregame lobby, and game browser share
+these names and the optional pictures/descriptions below.
+
+Xbox community maps must have matching file/header names (up to 31
+characters), a recognized retail build, a multiplayer scenario, valid tag
+ranges within the existing **22 MiB tag arena**, and a decompressed size
+no larger than **128 MiB**. The larger limit is only for multiplayer cache
+files on disk (`HALO_PORT_MULTIPLAYER_CACHE_SIZE`); it does not enlarge the
+tag arena. Compressed files need not have the same physical and declared
+sizes. Discovery validates headers, not every compressed payload. Campaign,
+UI, other-version, malformed, and stock-name duplicates are excluded.
+
+Xbox community levels use their bare filename stems. Existing saved
+selections written as `levels\test\<name>\<name>` still select the same
+map. Files with the same basename follow the loader's existing preference:
+`.map` before `.yelo`, without duplicate menu entries. Up to 128 community
+maps are listed. Without a description file, Xbox maps say "Xbox community
+map".
+
 With the setting on, the multiplayer map list offers every Custom Edition
 multiplayer map in the data root's `maps` folder (OpenSauce `.yelo` maps
 among them) after the thirteen Xbox levels, in the order of their names; the
@@ -338,6 +361,16 @@ changed:
 ## Tested
 
 ### Automated tests
+
+`python -m unittest tools.test_custom_edition_maps` (11 tests; needs a C
+compiler) compiles the production map registry, cache format reader, BMP
+reader, and the relevant CE/header/cache-slot/selection functions with
+undefined-behavior traps. Synthetic headers cover CE-off Xbox discovery,
+enabled CE and OpenSauce maps, stock ordering, case-insensitive duplicates,
+`.map` preference, malformed headers, name and size boundaries, saved map
+selection, description/picture sidecars, and refresh cleanup. The filesystem
+and texture-allocation boundaries are simulated; playable tags and actual
+rendering require the runtime checks below.
 
 `python -m pytest tools/test_cache_file_formats.py` (131 tests; needs clang).
 The tests build complete synthetic caches and resource maps in memory (no
