@@ -5,6 +5,9 @@ the LLVM guest rebase pass can no longer recognize those arguments as pointers.
 No GL context, graphics driver, app, or game data is required.
 """
 from pathlib import Path
+import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -179,6 +182,57 @@ class GeneratedGLPointerTests(unittest.TestCase):
 
     def test_android_integer_pointers_remain_unbiased(self):
         self.compile_and_run(macos=False)
+
+
+class GLRebaseIRTests(unittest.TestCase):
+    def test_base_vertex_offsets_stay_unbiased_but_memory_pointers_rebase(self):
+        llvm = Path(os.environ.get("HALO_MACOS_LLVM_BIN", "/opt/homebrew/opt/llvm@22/bin"))
+        if not all((llvm / name).is_file() for name in ("clang++", "llvm-config", "opt")):
+            self.skipTest("LLVM 22 is required for the compiler adapter regression")
+        source = r'''
+target datalayout = "e-m:o-p:32:32-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
+target triple = "arm64_32-apple-watchos2.0.0"
+declare void @hostgl_glDrawElementsBaseVertex(i32, i32, i32, ptr, i32)
+declare void @hostgl_glBufferData(i32, i64, ptr, i32)
+define void @probe(ptr %indices, ptr %data) {
+  call void @hostgl_glDrawElementsBaseVertex(i32 4, i32 6, i32 5123, ptr %indices, i32 -7)
+  call void @hostgl_glDrawElementsBaseVertex(i32 4, i32 6, i32 5123, ptr null, i32 -7)
+  call void @hostgl_glDrawElementsBaseVertex(i32 4, i32 6, i32 5123, ptr inttoptr (i32 -2147483616 to ptr), i32 -7)
+  call void @hostgl_glBufferData(i32 34962, i64 16, ptr %data, i32 35044)
+  call void @hostgl_glBufferData(i32 34962, i64 0, ptr null, i32 35044)
+  ret void
+}
+'''
+        flags = shlex.split(subprocess.check_output(
+            [str(llvm / "llvm-config"), "--cxxflags", "--ldflags", "--libs", "core", "passes"],
+            text=True))
+        with tempfile.TemporaryDirectory(prefix="halo-gl-rebase-") as directory:
+            temp = Path(directory)
+            plugin = temp / "guest_rebase.dylib"
+            result = subprocess.run([
+                str(llvm / "clang++"), "-shared", "-fPIC",
+                str(ROOT / "port/macos/compiler/guest_rebase.cpp"), "-o", str(plugin), *flags,
+            ], capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            (temp / "probe.ll").write_text(source)
+            result = subprocess.run([
+                str(llvm / "opt"), f"-load-pass-plugin={plugin}", "-passes=halo-rebase,verify",
+                "-S", str(temp / "probe.ll"), "-o", "-",
+            ], capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            output = result.stdout
+            calls = re.findall(r"call void @hostgl_glDrawElementsBaseVertex\([^\n]+", output)
+            self.assertEqual(len(calls), 3)
+            for call, argument in zip(calls, ("ptr %indices", "ptr null",
+                                              "ptr inttoptr (i32 -2147483616 to ptr)")):
+                self.assertIn(f"i32 5123, {argument}, i32 -7)", call)
+                self.assertNotIn("addrspace", call)
+            # The exception is specific to index-buffer offsets: ordinary host
+            # memory imports must still receive biased 64-bit pointers, and
+            # null must remain null rather than pointing at the arena start.
+            self.assertRegex(output, r"or i64 [^\n]+, 1099511627776")
+            self.assertRegex(output, r"call void @hostgl_glBufferData\(i32 34962, i64 16, ptr addrspace\(272\) %")
+            self.assertIn("@hostgl_glBufferData(i32 34962, i64 0, ptr addrspace(272) null, i32 35044)", output)
 
 
 if __name__ == "__main__":

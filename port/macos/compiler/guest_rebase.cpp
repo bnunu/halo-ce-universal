@@ -17,7 +17,8 @@ bool isHandle(StringRef name, unsigned argument) {
     return (argument == 0 &&
             (name == "hostposix_directory_next" || name == "hostposix_directory_close")) ||
            (argument == 3 &&
-            (name == "hostgl_glDrawElements" || name == "hostgl_glDrawElementsInstanced")) ||
+            (name == "hostgl_glDrawElements" || name == "hostgl_glDrawElementsInstanced" ||
+             name == "hostgl_glDrawElementsBaseVertex")) ||
            (argument == 5 &&
             (name == "hostgl_glVertexAttribPointer" || name == "hostgl_glDrawRangeElements")) ||
            (argument == 4 && name == "hostgl_glVertexAttribIPointer");
