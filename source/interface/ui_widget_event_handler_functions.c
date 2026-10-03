@@ -2957,7 +2957,7 @@ static boolean multiplayer_level_list_initialize(
 	char map_name[256];
 	struct ui_widget_definition *definition = ui_widget_definition_get(widget->definition_tag_index);
 	short level_count = 13;
-	/* the Xbox levels, then the Custom Edition maps in the maps folder
+	/* the Xbox levels, then compatible Xbox and enabled Custom Edition maps
 	(port/linux/game/custom_edition_maps.c) */
 	char **levels = custom_edition_maps_level_list(
 		event_handler_functions.multiplayer_levels,
@@ -2976,8 +2976,8 @@ static boolean multiplayer_level_list_initialize(
 	{
 		widget->data3C.selected_index = 0;
 		while (widget->data3C.selected_index < level_count &&
-			_stricmp(map_name,
-				levels[widget->data3C.selected_index]))
+			_stricmp(tag_name_strip_path(map_name),
+				tag_name_strip_path(levels[widget->data3C.selected_index])))
 		{
 			widget->data3C.selected_index++;
 		}

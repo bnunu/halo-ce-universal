@@ -192,7 +192,8 @@ struct cache_file_header
 	byte reserved18[8];
 	char name[0x20];
 	char build[0x20];
-	byte reserved60[4];
+	short scenario_type;
+	short pad62;
 	unsigned long checksum;
 	byte reserved68[0x794];
 	unsigned long footer_signature;
@@ -574,7 +575,9 @@ boolean cache_file_header_verify(
 		header->footer_signature != CACHE_FILE_FOOTER_SIGNATURE ||
 		header->file_length < 0 ||
 		header->file_length > 0x11600000 ||
-		csstrlen(header->name) > 31)
+		(header->scenario_type == _scenario_type_multiplayer &&
+			header->file_length > HALO_PORT_MULTIPLAYER_CACHE_SIZE) ||
+		!memchr(header->name, 0, sizeof(header->name)))
 	{
 		if (fatal)
 		{
