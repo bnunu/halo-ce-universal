@@ -6,6 +6,17 @@ it. It is made for players who have never built anything: the player
 supplies only their own copy of the game, the one thing that cannot be
 downloaded, and a step-by-step setup does everything else.
 
+**Most players don't need it any more (1.8).** cybersecurity/halo-ce-universal
+now publishes the game for Windows ready-made (`halo-windows-release.zip`,
+linked in the *Download* section of its README), and the game updates
+itself. From 1.8 the launcher says so: when it opens on a PC where the usual
+build has shown its picture, it explains the download and offers to
+uninstall itself, keeping the game files (the `maps` folder, which the
+ready-made game can use in place of the disc image) in `Halo game files` in
+the user's folder. Setup's first page says the same. The launcher stays the
+way to play on graphics without OpenGL 4.5: the ready-made download has no
+Direct3D build, so installs on that build are not asked.
+
 ## What you need
 
 **Halo: Combat Evolved for the original Xbox, the North American (NTSC) or
@@ -179,7 +190,10 @@ Uninstall *Halo CE Universal* in Windows' Settings > Apps (or *More >
 Uninstall* in the launcher). It removes the install folder, the shortcuts and
 the registry entries. Saved games stay, and so do Microsoft's C++ build tools
 if setup installed them: they are *Visual Studio Build Tools 2022* in the
-same list.
+same list. The uninstall that the ready-made Halo's window offers (*More >
+Halo ready-made*) first moves the game's `maps` folder to `Halo game files`
+in the user's folder (or at the top of the install's drive, when that is
+another drive), and opens it when it's done.
 
 ## Command line
 

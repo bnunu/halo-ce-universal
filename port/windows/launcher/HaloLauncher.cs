@@ -46,8 +46,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle(HaloLauncher.Edition.Name + " Launcher")]
 [assembly: AssemblyProduct(HaloLauncher.Edition.Name + " Launcher")]
 // SelfUpdate compares this with the newest release's launcher.txt
-[assembly: AssemblyVersion("1.7.0.0")]
-[assembly: AssemblyFileVersion("1.7.0.0")]
+[assembly: AssemblyVersion("1.8.0.0")]
+[assembly: AssemblyFileVersion("1.8.0.0")]
 
 namespace HaloLauncher
 {
@@ -128,6 +128,13 @@ namespace HaloLauncher
 		public const string AngleLibrary = "runtimes/win-x86/native/av_libglesv2.dll";
 		public const string AngleLibrarySha256 = "1e4df6ab43cc25cdaa5405048cb1088b5ca26660adfdddaeaf88c8954464244a";
 		public const string AngleLicence = "LICENSE";
+
+		// Halo ready-made for Windows: cybersecurity/halo-ce-universal's own
+		// builds, which the Download section of its README links, and which
+		// update themselves. Where they run (OpenGL 4.5) the launcher isn't
+		// needed any more (ReadyMadeForm).
+		public const string ReadyMadeZipUrl = "https://github.com/cybersecurity/halo-ce-universal/releases/latest/download/halo-windows-release.zip";
+		public const string ReadyMadeReadmeUrl = "https://github.com/cybersecurity/halo-ce-universal#download";
 
 		// the launcher's own releases: each carries the launcher and
 		// launcher.txt (SelfUpdate), the pre-update edition's under a tag of
@@ -2493,6 +2500,16 @@ namespace HaloLauncher
 			return null;
 		}
 
+		// Whether the game's last start (logs\game.log) had its picture with
+		// OpenGL 4.5, which the ready-made builds need: "OpenGL 4.6.0 ... on
+		// ..." (the Direct3D build's "OpenGL OpenGL ES 3.0" is not that).
+		static readonly Regex OpenGLPicture = new Regex(@": OpenGL \d");
+
+		public static bool HadOpenGLPicture(Folders folders)
+		{
+			return OpenGLPicture.IsMatch(ReadLog(folders.GameLog));
+		}
+
 		// the game's log so far (cmd.exe and the game have it open)
 		static string ReadLog(string path)
 		{
@@ -3074,9 +3091,11 @@ namespace HaloLauncher
 
 		// Asks, then removes the installation: the game, its tools, the copy of
 		// the game data, the shortcuts and the registry entries. Saved games
-		// stay. Returns true if it was removed (the caller then exits, and the
-		// launcher's own file goes a moment later).
-		public static bool Run(IWin32Window owner, Settings settings)
+		// stay. With keepGameFiles, the game data's maps folder is moved out
+		// first (KeepGameFiles), for the ready-made Halo. Returns true if it
+		// was removed (the caller then exits, and the launcher's own file goes
+		// a moment later).
+		public static bool Run(IWin32Window owner, Settings settings, bool keepGameFiles = false)
 		{
 			const string title = "Uninstall " + Edition.Name;
 			Folders folders = settings.Folders();
@@ -3088,8 +3107,12 @@ namespace HaloLauncher
 			string tools = settings.InstalledBuildTools
 				? "\r\n\r\nMicrosoft's C++ build tools, which were installed for Halo, stay: remove \"Visual Studio Build Tools 2022\" in Windows' Settings > Apps if nothing else needs them."
 				: "";
-			if (MessageBox.Show(owner, "Remove " + Edition.Name + " from this PC?\r\n\r\nThis deletes the game, its tools and the copy of your game files in " +
-				folders.Root + ". Your saved games stay (in %APPDATA%\\halo)." + tools, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+			string what = keepGameFiles
+				? "This deletes the game and its tools in " + folders.Root + ". Your game files (the maps folder) are kept in a folder of their own, " +
+					"which opens when it's done."
+				: "This deletes the game, its tools and the copy of your game files in " + folders.Root + ".";
+			if (MessageBox.Show(owner, "Remove " + Edition.Name + " from this PC?\r\n\r\n" + what + " Your saved games stay (in %APPDATA%\\halo)." + tools,
+				title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
 				return false;
 			try
 			{
@@ -3101,15 +3124,62 @@ namespace HaloLauncher
 				MessageBox.Show(owner, error.Message, title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return false;
 			}
+			string kept = null;
+			if (keepGameFiles)
+			{
+				try
+				{
+					kept = KeepGameFiles(folders);
+				}
+				catch (Exception error)
+				{
+					MessageBox.Show(owner, "Your game files couldn't be moved out of " + folders.Root + " (" + error.Message + "), so nothing was removed.",
+						title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+					return false;
+				}
+			}
 			if (!Remove(folders))
 			{
 				MessageBox.Show(owner, "Some files in " + folders.Root + " couldn't be removed, maybe because a program still " +
-					"uses them. Restart Windows, then uninstall again.", title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+					"uses them. Restart Windows, then uninstall again." + (kept != null ? " Your game files are in " + kept + "." : ""),
+					title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 				return false;
 			}
-			MessageBox.Show(owner, Edition.Name + " was removed.", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+			MessageBox.Show(owner, Edition.Name + " was removed." + (kept != null ? "\r\n\r\nYour game files are in " + kept + ". If the new Halo " +
+				"asks for your disc image and you don't have it any more, copy the maps folder from there next to its halo.exe." : ""),
+				title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+			if (kept != null)
+			{
+				try
+				{
+					Process.Start("explorer.exe", Util.Quote(kept));
+				}
+				catch (Exception)
+				{
+				}
+			}
 			RemoveLauncherLater(folders);
 			return true;
+		}
+
+		// Moves the game data's maps folder out of the install into a folder
+		// of its own on the same drive, so it is a rename however big it is:
+		// in the user's folder (not Documents, which OneDrive may upload), or
+		// at the top of the drive when the install is on another one. Returns
+		// that folder, or null when there are no maps.
+		static string KeepGameFiles(Folders folders)
+		{
+			string maps = Path.Combine(folders.Data, "maps");
+			if (!Directory.Exists(maps))
+				return null;
+			string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+			string parent = profile.Length > 0 && Util.SameDrive(profile, maps) ? profile : Path.GetPathRoot(Path.GetFullPath(maps));
+			string kept = Path.Combine(parent, "Halo game files");
+			for (int number = 2; Directory.Exists(kept) || File.Exists(kept); number++)
+				kept = Path.Combine(parent, "Halo game files " + number);
+			Directory.CreateDirectory(kept);
+			Directory.Move(maps, Path.Combine(kept, "maps"));
+			return kept;
 		}
 
 		// another launcher window of this install may be building
@@ -4205,6 +4275,30 @@ namespace HaloLauncher
 			return new Label { Text = text, Font = Look.Bold(13F), ForeColor = Look.Ink, AutoSize = true, MaximumSize = new Size(TextWidth, 0), Margin = new Padding(0, 0, 0, spaceAfter) };
 		}
 
+		// (from 1.8) most players want the ready-made Halo, not this setup
+		static Control ReadyMadeNote()
+		{
+			var note = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, BackColor = Look.Note,
+				Padding = new Padding(12, 10, 12, 4), Margin = new Padding(0, 0, 0, 14) };
+			note.Controls.Add(Look.Text("Halo CE Universal now comes ready to play: its makers publish it for Windows already built, and it keeps " +
+				"itself up to date. Most players should download that instead of setting it up here.", 10F, Look.Ink, TextWidth - 24));
+			var link = new LinkLabel { Text = "Download Halo ready-made", Font = Look.Bold(10F), AutoSize = true, Margin = new Padding(0, 0, 0, 8) };
+			link.LinkClicked += delegate
+			{
+				try
+				{
+					Process.Start(Pinned.ReadyMadeReadmeUrl);
+				}
+				catch (Exception)
+				{
+				}
+			};
+			note.Controls.Add(link);
+			note.Controls.Add(Look.Text("This setup is for PCs where the ready-made Halo can't show its picture, because the graphics have no " +
+				"OpenGL 4.5 (Intel HD Graphics from before 2016, for example): it builds Halo's Direct3D version for them.", 9.5F, Look.Muted, TextWidth - 24));
+			return note;
+		}
+
 		static FlowLayoutPanel Page(params Control[] controls)
 		{
 			var flow = new FlowLayoutPanel
@@ -4298,6 +4392,9 @@ namespace HaloLauncher
 			gameHint.Margin = new Padding(0, 0, 0, 12);
 			pages[Welcome] = Page(
 				Heading("Let's get Halo running on your PC"),
+#if !PRE_UPDATE
+				ReadyMadeNote(),
+#endif
 				Paragraph("This sets up Halo: Combat Evolved, the original Xbox game, rebuilt from its source code to run on Windows."),
 				Paragraph("You need one thing that can't be downloaded for you:"),
 				game, gameHint,
@@ -4744,6 +4841,7 @@ namespace HaloLauncher
 		readonly ContextMenuStrip moreMenu = new ContextMenuStrip();
 		readonly ToolStripMenuItem developerItem = new ToolStripMenuItem("Developer build (stops at the first failed assertion)");
 		readonly ToolStripMenuItem direct3DItem = new ToolStripMenuItem("Direct3D build (for graphics without OpenGL 4.5)");
+		readonly ToolStripMenuItem readyMadeItem = new ToolStripMenuItem("Halo ready-made, without this launcher...");
 		readonly List<ToolStripItem> busyItems = new List<ToolStripItem>();
 		readonly ProgressPanel progress = new ProgressPanel(false);
 		Process game;
@@ -4773,6 +4871,9 @@ namespace HaloLauncher
 				else
 					CheckForUpdate(false);
 				SelfUpdate.Offer(this, delegate { return progress.Busy || game != null; });
+				// (once the window is up)
+				if (!switchToDirect3D && ReadyMadeForm.Applies(settings))
+					BeginInvoke(new Action(OfferReadyMade));
 			};
 			FormClosing += OnClosing;
 		}
@@ -4851,6 +4952,11 @@ namespace HaloLauncher
 			direct3DItem.Click += delegate { ToggleDirect3D(); };
 			moreMenu.Items.Add(direct3DItem);
 			busyItems.Add(direct3DItem);
+#if !PRE_UPDATE
+			readyMadeItem.Click += delegate { OfferReadyMade(); };
+			moreMenu.Items.Add(readyMadeItem);
+			busyItems.Add(readyMadeItem);
+#endif
 			moreMenu.Items.Add(new ToolStripSeparator());
 			AddItem("Uninstall " + Edition.Name + "...", delegate { Uninstall(); }, true);
 
@@ -4915,6 +5021,8 @@ namespace HaloLauncher
 				item.Enabled = !busy && !running;
 			developerItem.Checked = settings.DeveloperBuild;
 			direct3DItem.Checked = settings.Direct3D;
+			// (the ready-made Halo has no Direct3D build)
+			readyMadeItem.Visible = !settings.Direct3D;
 		}
 
 		/* updates */
@@ -5177,10 +5285,23 @@ namespace HaloLauncher
 			RunWork(false);
 		}
 
-		void Uninstall()
+		void Uninstall(bool keepGameFiles = false)
 		{
-			if (Uninstaller.Run(this, settings))
+			if (Uninstaller.Run(this, settings, keepGameFiles))
 				Close();
+		}
+
+		// the ready-made Halo, and the launcher's uninstall after it
+		void OfferReadyMade()
+		{
+			if (progress.Busy || game != null)
+				return;
+			using (var form = new ReadyMadeForm())
+			{
+				form.ShowDialog(this);
+				if (form.UninstallChosen)
+					Uninstall(form.KeepGameFiles);
+			}
 		}
 
 		void OnClosing(object sender, FormClosingEventArgs e)
@@ -5202,6 +5323,101 @@ namespace HaloLauncher
 		public static Folders Folders(this Settings settings)
 		{
 			return new Folders(settings.Root);
+		}
+	}
+
+	// From 1.8: cybersecurity/halo-ce-universal publishes Halo for Windows
+	// ready-made (Pinned.ReadyMadeZipUrl), and it keeps itself up to date, so
+	// the launcher isn't needed where that runs. This asks the players whose
+	// usual build had its OpenGL 4.5 picture to change to it and then to
+	// uninstall the launcher, keeping their game files. The Direct3D build has
+	// no ready-made download: its players keep the launcher.
+	sealed class ReadyMadeForm : Form
+	{
+		readonly CheckBox keepBox = new CheckBox();
+
+		// what the player chose: Uninstall the launcher (else Later)
+		public bool UninstallChosen;
+		public bool KeepGameFiles { get { return keepBox.Checked; } }
+
+		// whether to ask on this install
+		public static bool Applies(Settings settings)
+		{
+#if PRE_UPDATE
+			return false;
+#else
+			return settings.Exists && !settings.Direct3D && GameLauncher.HadOpenGLPicture(settings.Folders());
+#endif
+		}
+
+		public ReadyMadeForm()
+		{
+			const int width = 520;
+			SuspendLayout();
+			AutoScaleDimensions = new SizeF(96F, 96F);
+			AutoScaleMode = AutoScaleMode.Dpi;
+			Font = Look.Regular(9.5F);
+			Text = Edition.Name;
+			Icon = AppIcon.Window;
+			FormBorderStyle = FormBorderStyle.FixedDialog;
+			MaximizeBox = false;
+			MinimizeBox = false;
+			ShowInTaskbar = false;
+			StartPosition = FormStartPosition.CenterParent;
+			AutoSize = true;
+			AutoSizeMode = AutoSizeMode.GrowAndShrink;
+			BackColor = Look.Paper;
+
+			var flow = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Padding = new Padding(24, 20, 24, 10), BackColor = Look.Paper };
+			flow.Controls.Add(new Label { Text = "Halo now comes ready to play", Font = Look.Bold(15F), ForeColor = Look.Ink, AutoSize = true, MaximumSize = new Size(width, 0), Margin = new Padding(0, 0, 0, 12) });
+			flow.Controls.Add(Look.Text("The makers of Halo CE Universal now publish it for Windows already built, and it keeps itself up to date. " +
+				"You don't need this launcher for it any more.", 10F, Look.Ink, width));
+			flow.Controls.Add(Look.Text(
+				"1. Click Download Halo: your browser downloads halo-windows-release.zip.\r\n" +
+				"2. Unzip it into a folder of its own, and start halo.exe there.\r\n" +
+				"3. The first time, Halo asks for your Halo disc image (.iso). If you don't have it any more, copy the maps folder that the " +
+				"launcher keeps for you (below) next to halo.exe instead.\r\n" +
+				"4. Come back here and click Uninstall the launcher. Your saved games stay, and the new Halo uses them.",
+				10F, Look.Ink, width));
+			keepBox.Text = "Keep my game files (the maps folder) when the launcher is uninstalled";
+			keepBox.Checked = true;
+			keepBox.AutoSize = true;
+			keepBox.Margin = new Padding(0, 0, 0, 8);
+			flow.Controls.Add(keepBox);
+			var readme = new LinkLabel { Text = "More about the ready-made Halo", AutoSize = true, Margin = new Padding(0, 0, 0, 14) };
+			readme.LinkClicked += delegate { Open(Pinned.ReadyMadeReadmeUrl); };
+			flow.Controls.Add(readme);
+
+			var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 4) };
+			Button later = Look.Plain("Later");
+			later.DialogResult = DialogResult.Cancel;
+			Button uninstall = Look.Plain("Uninstall the launcher");
+			uninstall.Click += delegate
+			{
+				UninstallChosen = true;
+				DialogResult = DialogResult.OK;
+			};
+			Button download = Look.Primary("Download Halo", 10.5F);
+			download.AutoSize = true;
+			download.MinimumSize = new Size(150, 34);
+			download.Margin = new Padding(4, 0, 4, 0);
+			download.Click += delegate { Open(Pinned.ReadyMadeZipUrl); };
+			buttons.Controls.AddRange(new Control[] { later, uninstall, download });
+			flow.Controls.Add(buttons);
+			Controls.Add(flow);
+			CancelButton = later;
+			ResumeLayout(true);
+		}
+
+		static void Open(string url)
+		{
+			try
+			{
+				Process.Start(url);
+			}
+			catch (Exception)
+			{
+			}
 		}
 	}
 
