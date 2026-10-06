@@ -4916,9 +4916,13 @@ static void widget_instance_render_text_box(
 			string_list_index = definition->string_list_index;
 		else
 			string_list_index = widget->parameters.text_box.string_list_index;
+		/* the port's error text, else a custom multiplayer map's name or
+		description (port/linux/game/custom_multiplayer_maps.c) */
 		string = widget == ui_widget_port_error_text_box && ui_widget_port_error_text ?
 			(wchar_t *)ui_widget_port_error_text :
-			unicode_string_list_get_string(definition->text_label_string_list.index, string_list_index);
+			custom_multiplayer_map_string(string_list_index);
+		if (!string)
+			string = unicode_string_list_get_string(definition->text_label_string_list.index, string_list_index);
 		length = ustrlen(string);
 		widget->parameters.text_box.text = pool_resize_pointer(
 			widget_memory_pool,

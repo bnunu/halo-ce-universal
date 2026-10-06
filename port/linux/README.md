@@ -265,6 +265,31 @@ the world (such as `rasterizer_wireframe`). Refer to `NETCODE.md`.
 The frame rate shows at the bottom right of the screen. It is the mean over
 half a second.
 
+## Extra multiplayer maps
+
+The Xbox game lists 13 multiplayer maps. The native builds list them, then
+each other Xbox multiplayer cache file in the map directory whose internal
+name is its file name (`game/custom_multiplayer_maps.c`), then the Custom
+Edition maps (with `game.custom_edition`): in the map list, the pregame
+screen and the server list. The game loads such a map as
+`levels\test\<name>\<name>`, as it loads the other maps.
+
+- The name and the description of the map come from an optional block in
+  the unused part of the cache file header. The layout is at the top of
+  `game/custom_multiplayer_maps.c`. Without the block, the file name is the
+  name.
+- The picture is the "unknown level" picture of `ui.map`.
+
+These limits are larger than on the Xbox, for larger maps
+(`include/halo_port_capacity.h`):
+
+- A cache slot of a multiplayer map is 96 MB (47 MB on the Xbox).
+- The game draws up to 32767 structure triangles each frame (16384 on the
+  Xbox).
+
+A split screen game can start with one player (two on the Xbox). Thus one
+keyboard can play a multiplayer map.
+
 ## System link
 
 The Xbox game lets 16 players on 4 machines play a system link game. This
@@ -578,6 +603,9 @@ Other changes:
 | `cache/physical_memory_map.c`, `cache/xbox_texture_cache.c` | The texture cache is two times the 22 MB of the Xbox (`include/halo_port_capacity.h`). A frame of a Custom Edition map can use more textures than the Xbox cache holds. |
 | `game/game_engine.c` | The prediction of the multiplayer vehicles needs the three vehicles that all Xbox maps have. The vehicles of a Custom Edition map keep their types (`game/custom_edition_objects.c`). |
 | `objects/object_types.c` | The game places the vehicles of a Custom Edition map by their multiplayer spawn flags, as retail Halo does (`game/custom_edition_objects.c`). |
+| `interface/ui_widget_event_handler_functions.c`, `interface/ui_widget_game_data_input_functions.c`, `interface/ui_widget.c` | The multiplayer map list, the pregame screen and the server list show the maps of `game/custom_multiplayer_maps.c`, before the Custom Edition maps. |
+| `networking/network_server_manager.c`, `interface/ui_widget_game_data_input_functions.c` | A split screen game can start with one player. |
+| `render/render.h`, `rasterizer/rasterizer.h`, `cache/cache_files_windows.c` | More structure triangles each frame, and larger cache slots for multiplayer maps. |
 
 The x86 inline assembly of the game is replaced by C. Thus the compiler
 can optimize that code for each processor:

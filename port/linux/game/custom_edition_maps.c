@@ -42,9 +42,10 @@ in lines of about 20 characters.
 /* ---------- constants */
 
 #define MAXIMUM_CUSTOM_EDITION_MAPS 128
-/* room for the level list's Xbox levels
-(ui_widget_event_handler_functions.c offers 13) */
-#define MAXIMUM_XBOX_LEVELS 16
+/* room for the level list's Xbox levels (ui_widget_event_handler_functions.c
+offers 13, then up to 32 other Xbox multiplayer maps of
+custom_multiplayer_maps.c) */
+#define MAXIMUM_XBOX_LEVELS 48
 
 /* levels\test\<name>\<name> in the 63 characters the game engine's stage
 keeps of a level name (game_engine.c, struct game_engine_stage) */

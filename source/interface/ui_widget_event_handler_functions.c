@@ -2957,12 +2957,7 @@ static boolean multiplayer_level_list_initialize(
 	char map_name[256];
 	struct ui_widget_definition *definition = ui_widget_definition_get(widget->definition_tag_index);
 	short level_count = 13;
-	/* the Xbox levels, then the Custom Edition maps in the maps folder
-	(port/linux/game/custom_edition_maps.c) */
-	char **levels = custom_edition_maps_level_list(
-		event_handler_functions.multiplayer_levels,
-		level_count,
-		&level_count);
+	char **levels = event_handler_functions.multiplayer_levels;
 
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1228,
 		definition->type == 2,
@@ -2970,6 +2965,11 @@ static boolean multiplayer_level_list_initialize(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1229,
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer level list' widget");
+	/* the Xbox levels, then the other Xbox multiplayer maps in the maps
+	folder (port/linux/game/custom_multiplayer_maps.c), then the Custom
+	Edition maps there (port/linux/game/custom_edition_maps.c) */
+	levels = custom_multiplayer_level_list(levels, level_count, &level_count, TRUE);
+	levels = custom_edition_maps_level_list(levels, level_count, &level_count);
 	widget->generated_list = levels;
 	widget->generated_count = level_count;
 	if (saved_game_file_retrieve_last_used_multiplayer_map(map_name))
