@@ -3748,7 +3748,10 @@ static boolean network_game_server_setup_game_from_playlist(
 		ustrncpy(server->game.name, machine_name, NETWORK_GAME_NAME_LENGTH - 1);
 		server->game.name[NETWORK_GAME_NAME_LENGTH - 1] = L'\0';
 		server->game.map.version = 0;
-		server->game.minimum_players = 2;
+		/* a PC has one keyboard, so a split screen game may start with a
+		single player. System link games still need two machines, each with
+		a player (server_ok_to_countdown). */
+		server->game.minimum_players = 1;
 		server->game.maximum_players = MAXIMUM_NETWORK_PLAYER_COUNT;
 
 		if (server->game.variant.universal_variant.teams)

@@ -54,6 +54,16 @@ struct scenario_object_datum;
 unsigned char custom_edition_vehicles_by_placement(void);
 unsigned char custom_edition_vehicle_placement_allowed(struct scenario_object_datum const *placement);
 
+/* the Xbox multiplayer maps beyond the original thirteen
+(port/linux/game/custom_multiplayer_maps.c) */
+char **custom_multiplayer_level_list(char **original_levels, short original_count, short *level_count,
+	unsigned char rescan);
+short custom_multiplayer_map_count(void);
+short custom_multiplayer_map_find(char const *map_name);
+short custom_multiplayer_map_name_string(short custom_index);
+short custom_multiplayer_map_description_string(short custom_index);
+unsigned short *custom_multiplayer_map_string(short string_list_index);
+
 /* the width of the screen the game draws, 480 lines tall: the device's or
 the display's shape, or 640 (port/linux/src/d3d8_gl.c) */
 long halo_screen_width(void);

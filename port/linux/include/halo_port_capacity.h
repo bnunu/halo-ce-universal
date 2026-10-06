@@ -71,4 +71,17 @@ objects, noncollideable objects, lights) */
 #define HALO_PORT_MAXIMUM_LIGHTS_PER_MAP 4096 /* (896) */
 #define HALO_PORT_MAXIMUM_GAME_LOOPING_SOUNDS 4096 /* (1024) */
 
+/* ---------- levels
+
+For larger levels than the Xbox's (maps rebuilt from Halo 2 and Halo 3):
+structure triangles drawn in a frame (a surface count is a short, so at most
+32767), the pool of dynamic triangles those are drawn from (with room for
+them on top of everything else drawn from it), and the cache slot of a
+multiplayer map (the native builds cache maps on the host disk, not in the
+Xbox's cache partition). None of these changes the simulation. */
+
+#define HALO_PORT_MAXIMUM_RENDERED_ENVIRONMENT_SURFACES 32767 /* (16384) */
+#define HALO_PORT_MAXIMUM_DYNAMIC_TRIANGLES 98304 /* (32768) */
+#define HALO_PORT_MULTIPLAYER_CACHE_FILE_MAXIMUM_SIZE 0x06000000 /* (0x02F00000) */
+
 #endif /* __HALO_PORT_CAPACITY_H */

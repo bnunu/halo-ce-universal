@@ -1178,6 +1178,18 @@ static void server_list_menu_update(
 					(server->open == TRUE) ? 20 : 21;
 				map_name_text->parameters.text_box.string_list_index =
 					map_bitmap->animation.current_frame_index;
+				/* a custom map this machine has too
+				(port/linux/game/custom_multiplayer_maps.c) */
+				{
+					short custom_index = custom_multiplayer_map_find(map_name);
+
+					if (custom_index != NONE)
+					{
+						map_bitmap->animation.current_frame_index = 13;
+						map_name_text->parameters.text_box.string_list_index =
+							custom_multiplayer_map_name_string(custom_index);
+					}
+				}
 
 				switch (server->engine_type)
 				{
@@ -2408,6 +2420,7 @@ static void multiplayer_game_set_text_box_for_map_name(
 	struct network_game *game;
 	char const *map_name;
 	short custom_edition_map_index;
+	short custom_map_index;
 
 	match_vassert(
 		"c:\\halo\\SOURCE\\interface\\ui_widget_game_data_input_functions.c",
@@ -2425,6 +2438,16 @@ static void multiplayer_game_set_text_box_for_map_name(
 		if (custom_edition_map_index != NONE)
 		{
 			widget->parameters.text_box.string_list_index = custom_edition_map_index;
+			return;
+		}
+		/* so does another Xbox multiplayer map in the maps folder, ahead of
+		the name matches below, which its name may contain
+		(port/linux/game/custom_multiplayer_maps.c) */
+		custom_map_index = custom_multiplayer_map_find(map_name);
+		if (custom_map_index != NONE)
+		{
+			widget->parameters.text_box.string_list_index =
+				custom_multiplayer_map_name_string(custom_map_index);
 			return;
 		}
 	if (strstr(map_name, "beavercreek"))
@@ -2704,6 +2727,13 @@ static void multiplayer_game_set_bitmap_for_map(
 			widget->animation.current_frame_index = custom_edition_map_index;
 			return;
 		}
+		/* another Xbox multiplayer map in the maps folder shows the unknown
+		level's picture (port/linux/game/custom_multiplayer_maps.c) */
+		if (custom_multiplayer_map_find(map_name) != NONE)
+		{
+			widget->animation.current_frame_index = 13;
+			return;
+		}
 	if (strstr(map_name, "beavercreek"))
 	{
 		widget->animation.current_frame_index = 0;
@@ -2931,7 +2961,9 @@ static void multiplayer_game_directions(
 		if (!waiting_for_machines &&
 			network_game_is_splitscreen_local() &&
 			game &&
-			game->player_count < 2)
+			/* one player may start a split screen game alone
+			(network_game_server_setup_game_from_playlist) */
+			game->player_count < 1)
 		{
 			widget->parameters.text_box.string_list_index =
 				_multiplayer_game_text_string_waiting_for_player;
@@ -4251,6 +4283,21 @@ static void mp_level_select_list_update_displayed_items(
 		pictures and descriptions (port/linux/game/custom_edition_maps.c) */
 		displayed_item_indices[item_index] = custom_edition_maps_level_display_index(
 			(short)displayed_item_indices[item_index]);
+		/* the other Xbox multiplayer maps, after the original 13, show their
+		own names and descriptions and the unknown level's picture
+		(port/linux/game/custom_multiplayer_maps.c) */
+		if (displayed_item_indices[item_index] >= 13 &&
+			displayed_item_indices[item_index] < 13 + custom_multiplayer_map_count())
+		{
+			short custom_map_index = (short)(displayed_item_indices[item_index] - 13);
+
+			map_name->parameters.text_box.string_list_index =
+				custom_multiplayer_map_name_string(custom_map_index);
+			map_bitmap->animation.current_frame_index = 13;
+			map_description->parameters.text_box.string_list_index =
+				custom_multiplayer_map_description_string(custom_map_index);
+			continue;
+		}
 		map_name->parameters.text_box.string_list_index =
 			(short)displayed_item_indices[item_index];
 		map_bitmap->animation.current_frame_index =
