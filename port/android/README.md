@@ -6,11 +6,15 @@
 
 The game shows its graphics with OpenGL ES 3. It plays sound through SDL3
 (AAudio). It accepts input from game controllers, for example a PlayStation
-5 DualSense on Bluetooth. The app needs Android 9 (API 28) or later. It
-operates on 64-bit-only devices, for example the Pixel 9 Pro XL.
+5 DualSense on Bluetooth, and from the touchscreen (refer to "Controls").
+The app needs Android 9 (API 28) or later. It operates on 64-bit-only
+devices, for example the Pixel 9 Pro XL.
 
 The Android build uses the platform layer of the Linux build
 (`port/linux/src`). Refer to [port/linux/README.md](../linux/README.md).
+Physical mice use the same control bindings. During play, F12 toggles mouse
+capture; captured mode hides Android's pointer and uses relative movement for
+continuous aiming, while releasing capture restores normal pointer behavior.
 
 ## Requirements
 
@@ -27,6 +31,36 @@ ninja) and these items:
 - A network connection for the first build. `configure.py` downloads musl
   1.2.5 and SDL 3.4.16 to `build/android/third_party`. Gradle downloads the
   Android Gradle Plugin.
+
+On Windows, build in WSL2 (Ubuntu 24.04). The Android build does not run
+on Windows itself. Enter
+`wsl -d Ubuntu -- bash tools/wsl_setup_android.sh` one time: it installs
+the tools and the Android SDK and NDK in WSL (apt asks for your
+password). Then enter
+`wsl -d Ubuntu -- bash tools/wsl_build_android.sh` for each build. The
+script copies the repository into WSL (`~/halo-build/src`) with LF line
+endings (a Windows checkout has CRLF line endings, which the build's text
+tools do not accept), builds there, and puts the APK in
+`dist/android/app-debug.apk`. Only the changed files are copied, so the
+next build is incremental. Install the APK with the adb of Windows.
+
+A build that you make yourself has a different signature from the builds
+of GitHub Actions. Android installs it only after you remove the app, and
+removing the app deletes its data folder (`maps/`, `save/` and
+`config.toml`). Thus a change between the builds of GitHub Actions and your
+own builds loses the saved games, unless you copy them first (below).
+Your own builds all have the same signature (the debug key of WSL,
+`~/.android`), so they install over each other and keep the data
+(`adb install -r`).
+
+To keep the saved games before you remove the app, enter
+`adb pull /sdcard/Android/data/com.halo.decomp/files/save/u` (the profiles).
+After the new install, before the first start of the app, enter
+`adb push u /sdcard/Android/data/com.halo.decomp/files/save/u`. The app reads
+and overwrites what adb pushes. adb cannot add files to `save/u` or `save/z` once the app made them, or
+change files that the app wrote, so push before the first start. adb cannot read
+some files that the app writes (the `blam.lst` files of `save/z`), so `adb pull`
+of the whole `save` folder stops there.
 
 ## Build and install the app
 
@@ -66,7 +100,9 @@ To install the data from a computer:
 | Settings | `config.toml` |
 
 To make a copy of the saved games, enter
-`adb pull /sdcard/Android/data/com.halo.decomp/files/save`.
+`adb pull /sdcard/Android/data/com.halo.decomp/files/save/u` (the profiles).
+An `adb pull` of the whole `save` folder stops at the `blam.lst` files of
+`save/z`, which adb cannot read.
 
 ## Controls
 
@@ -92,8 +128,82 @@ with the positions on the Xbox controller:
 | Create | back | |
 
 The controller gets the rumble. The back gesture of Android is the B
-button. A Bluetooth or USB keyboard operates as on Linux. The screen does
-not accept touch input.
+button. A Bluetooth or USB keyboard operates as on Linux.
+
+The touchscreen operates the menus: tap an item to select it (on a
+setting with values, tap its left or right half), tap a button of the key
+at the bottom of a screen (for example "B = Back") to push it, and drag to
+scroll a list (down or right steps back, up or left steps forward). A drag
+stops at the first and the last item, and it does not change a setting's
+value. Touches that start in the edge-gesture zones of Android do not tap
+or scroll at the sides, and do not scroll at the top and bottom, because the
+first swipe from an edge in full screen only shows the system bars.
+
+A tap during a cinematic that can be skipped skips it, as A does. On the
+on-screen keyboard, tap a key to press it, "B =BACK" to cancel and
+"A =ENTER" to accept the name.
+
+### Touch controls
+
+In a game, the app shows touch controls over the picture. They are a
+controller for player 1. With the default buttons of the profile:
+
+| Control | Function in the game |
+| --- | --- |
+| stick (lower left) | move |
+| swipe on the screen away from the buttons | look |
+| Fire | right trigger |
+| Grenade | left trigger |
+| A / Jump, B / Melee, X / Reload, Y / Weapon | A, B, X, Y |
+| Crouch, Zoom | left and right stick clicks |
+| Light, Gren. type | white, black |
+| Pause, Back | start, back |
+| Up, Down, Left, Right | D-pad |
+
+The names on the buttons follow the profile's "Button layout" (Settings >
+Gamepads): with "Swap triggers", the right trigger's button says "Grenade".
+The stick moves the player with every "Stick layout", southpaw too.
+
+A finger that holds a button can also swipe to look, so you can fire and
+aim with one thumb. The controls are a finger wide (48 dp) or larger, but
+on a small screen of high density they stay apart rather than reach that
+size. A short tap reaches the game even when it is shorter than one frame.
+Swipes that start in the edge-gesture zones of Android do not turn the
+view. The swipe aims as the controller's stick does, not as a mouse: the
+aim slows over a target and follows a moving one, as with a controller,
+and it follows the profile's "invert look" (the gyroscope turns the view
+as the phone turns, never inverted). The setting `input.touch_aim_assist`
+turns the aim assist off. "Look sensitivity" sets how far a swipe turns;
+the mouse settings do not apply.
+
+The touch controls show only in a game. In the menus and during
+cinematics they hide, and the touchscreen operates the menus as described
+above. They also hide when a controller is connected, for example the
+built-in controller of a handheld. A device without a touchscreen (a TV)
+never shows them. The setting `input.touch_controls` changes this (refer
+to "Settings").
+
+The buttons at the top of the screen:
+
+- "Hide" removes the controls (and stops the gyroscope aiming and the
+  vibration) until you push "Touch"; the app remembers it.
+- "Options" opens these items:
+  - "General": the phone's vibration (on by default; it follows the
+    vibration setting of the game's profile), aiming with the gyroscope
+    (off by default), a floating move stick (off by default: the stick goes
+    where your thumb lands in the lower left of the screen), the opacity of
+    the controls, "Hide or add buttons" (hide a button, add a copy of a
+    button) and "Edit buttons size".
+  - "Edit buttons layout": drag the controls to new positions, then push
+    "Save". "Export" and "Import" write and read a layout file with the
+    file picker of the system.
+  - "Look sensitivity".
+
+"Hide" and "Options" act when the finger lifts on them: a swipe that
+starts on them turns the view instead.
+
+The app keeps the layout in its own preferences, not in `config.toml`.
+Removing the app's data or the app removes the layout.
 
 ## Settings
 
@@ -113,8 +223,11 @@ These settings are only for Android:
 
 | Setting | Function |
 | --- | --- |
+| `input.touch_aim_assist` | `true` (the default): the touch controls' swipe aiming gets the aim assist of a controller (the aim slows over a target and follows a moving one). `false`: none, as with a mouse; the bullets' own autoaim stays. |
+| `input.touch_controls` | The touch controls in a game. `"auto"` (the default): shown on a touchscreen while no controller is connected. `"on"`: also shown with a controller. `"off"`: never shown. A device without a touchscreen never shows them. The menus take taps in any case. |
 | `display.screen_width` | The number of columns of the 480-line picture. `0` (the default): the shape of the display (1068 on a 20:9 phone). `640`: the 4:3 shape of the Xbox. |
 | `debug.sample_seconds` | Refer to "Find problems". |
+| `debug.memory_watch` | `true` (the default): the app notices the game's writes to textures and vertices by page protection. `false`: it compares page contents once a frame instead, which is slower. Refer to "Limits". |
 
 ## Internet play
 
@@ -157,7 +270,7 @@ signature. GitHub Actions signs each build with the key in the
 `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD` secrets of the
 repository. If you installed a build that has a different signature, remove
 that build before you install a new build. Removing the app deletes its data
-folder: first make a copy of `maps/` and `save/`.
+folder: first make a copy of `maps/` and `save/u`.
 
 ## Widescreen
 
@@ -171,9 +284,7 @@ the Xbox:
 - Black bars and fades cover all of the screen, and so do the menus' dims
   and backgrounds (the pause menu's dim, dialogs, the menus' gradient).
 
-The changes are in `#ifdef HALO_ANDROID` in `rasterizer_xbox.c`, `render.c`,
-`ui_widget.c`, `cinematics.c`, `main.c` and
-`rasterizer_xbox_screen_effect.c`.
+All the ports draw this way.
 
 ## How the port operates
 
@@ -251,7 +362,11 @@ functions of OpenGL ES 3.2 if they are available:
   changes the indices.
 - On OpenGL ES 3.1 and later, the visibility tests (lens flares) count
   samples with an atomic counter, as the NV2A did. OpenGL ES 3.0 tells only
-  if a sample is visible.
+  if a sample is visible. The GPU copies the counters at the end of each
+  frame, and the CPU reads the copy two frames later, when the frame's fence
+  has passed: a result is the latest count the GPU has finished, as with
+  the query buffer of desktop OpenGL. A read of the counters themselves
+  waits for the GPU, which halved the frame rate on Turnip (Zink).
 
 ### Calling conventions
 
@@ -274,9 +389,17 @@ floating-point contraction, as on x86.
 
 ### Game source changes
 
+The port's code tells three things apart, each its own macro, which the
+Android build defines all of (`tools/android_build.py`):
+
+- `HALO_ARM64_GUEST`: the guest's ABI (ILP32 AArch64 code in a 64-bit
+  process);
+- `HALO_GLES`: the OpenGL ES renderer;
+- `HALO_ANDROID`: the app (its display, input, files and lifecycle).
+
 The x86 inline assembly is replaced by C (refer to
 [port/linux/README.md](../linux/README.md#game-source-changes)).
-These changes are in `#ifdef HALO_ANDROID`:
+These changes are in `#ifdef HALO_ARM64_GUEST`:
 
 - Seven `#pragma bss_seg(".bss")` lines are removed. The Darwin target does
   not accept them.
@@ -303,6 +426,8 @@ assembly of the port is necessary:
   at this interval. This finds hangs on devices without root access.
 - Set `gl_debug = true` in `[debug]` of `config.toml`. The log then shows
   the OpenGL ES errors.
+- The log says which write tracking the app uses: "page protection"
+  (devices) or "page hashes" (the emulator, or `debug.memory_watch = false`).
 
 ## Limits
 
@@ -310,6 +435,16 @@ assembly of the port is necessary:
 - The device must let the app reserve the fixed guest addresses, from
   `0x80000000` to approximately `0x89000000`. If the addresses are not
   available, the app shows a message.
-- The game does not accept touch input. Use a controller or a keyboard.
+- Touch operates the menus and skips cinematics. In the game, the touch
+  controls appear when no controller is connected; their size follows the
+  height of the screen (larger on a tablet than on a phone), never smaller
+  than a finger.
 - Kernels with 16 KB pages (a developer option of Android 15) do not
   operate. The Xbox memory uses 4 KB pages.
+- The x86 Android emulator runs the app through its ARM translation. The
+  translation cannot deliver the page faults that the renderer uses to
+  notice changed textures and vertices. On the emulator the app compares
+  page contents once a frame instead ("write tracking: page hashes" in the
+  log). This is slower, and a write shows one frame later, so moving
+  geometry can glitch briefly. `debug.memory_watch = false` does the same
+  on a device.

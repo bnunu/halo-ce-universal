@@ -120,12 +120,16 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "text/draw_string.h"
 #include <xtl.h>
+#include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 
 /* ---------- constants */
 
+typedef char verify_xbox_texture_cache_size[
+	HALO_PORT_TEXTURE_CACHE_SIZE == HALO_PORT_TEXTURE_CACHE_PAGE_COUNT * 0x4000 ? 1 : -1];
+
 enum
 {
-	/* the native builds' larger texture cache (halo_port_capacity.h) */
+	/* port: the native builds' larger cache (halo_port_capacity.h) */
 	XBOX_TEXTURE_CACHE_PAGE_COUNT = HALO_PORT_TEXTURE_CACHE_PAGE_COUNT,
 	XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS = 14,
 	XBOX_TEXTURE_CACHE_PAGE_SIZE = 1 << XBOX_TEXTURE_CACHE_PAGE_SIZE_BITS,
@@ -137,9 +141,6 @@ enum
 	XBOX_TEXTURE_CACHE_SIZE = HALO_PORT_TEXTURE_CACHE_SIZE,
 	XBOX_TEXTURE_CACHE_PROTECTION = 0x404,
 };
-
-typedef char verify_xbox_texture_cache_size[
-	XBOX_TEXTURE_CACHE_SIZE == XBOX_TEXTURE_CACHE_PAGE_COUNT * XBOX_TEXTURE_CACHE_PAGE_SIZE ? 1 : -1];
 
 enum
 {
@@ -620,8 +621,12 @@ static void texture_cache_initialize_hardware_format(
 			(2 << D3DFORMAT_DIMENSION_SHIFT) |
 			D3DFORMAT_BORDERSOURCE_COLOR |
 			D3DFORMAT_DMACHANNEL_A;
+		/* port: the pitch rounded up, as rasterizer_xbox_bitmap_rebuild_hardware_format
+		pads the rows (an Xbox map's linear rows are whole multiples of it; a
+		Custom Edition map's need not be) */
 		texture->Size =
-			((bitmap_mipmap_get_row_pitch(bitmap, 0) / D3DTEXTURE_PITCH_ALIGNMENT - 1) << D3DSIZE_PITCH_SHIFT) |
+			(((bitmap_mipmap_get_row_pitch(bitmap, 0) + D3DTEXTURE_PITCH_ALIGNMENT - 1) / D3DTEXTURE_PITCH_ALIGNMENT - 1)
+				<< D3DSIZE_PITCH_SHIFT) |
 			((bitmap->height - 1) << D3DSIZE_HEIGHT_SHIFT) |
 			(bitmap->width - 1);
 	}
@@ -763,14 +768,18 @@ static boolean texture_cache_bitmap_valid(
 			bitmap_d3d_format_tables[linear ? _bitmap_d3d_format_table_linear : _bitmap_d3d_format_table_regular][bitmap->format]!=NONE &&
 			compressed_flag==compressed_format;
 	}
+	/* port: a Custom Edition map's linear rows need not be whole steps of the
+	pitch: they are padded to them as its pixels load
+	(port/linux/game/custom_edition_bitmaps.c) */
 	if (valid && linear)
 	{
 		long row_pitch = bitmap_mipmap_get_row_pitch(bitmap, 0);
+		long steps = (row_pitch+D3DTEXTURE_PITCH_ALIGNMENT-1)/D3DTEXTURE_PITCH_ALIGNMENT;
 
 		valid =
 			row_pitch>0 &&
-			row_pitch%D3DTEXTURE_PITCH_ALIGNMENT==0 &&
-			row_pitch/D3DTEXTURE_PITCH_ALIGNMENT<=(long)((D3DSIZE_PITCH_MASK>>D3DSIZE_PITCH_SHIFT)+1);
+			(row_pitch%D3DTEXTURE_PITCH_ALIGNMENT==0 || custom_edition_cache_tags_loaded()) &&
+			steps<=(long)((D3DSIZE_PITCH_MASK>>D3DSIZE_PITCH_SHIFT)+1);
 	}
 	if (!valid && !reported)
 	{

@@ -91,9 +91,9 @@ void rasterizer_geometry_compress_vertices(
 
 /* ---------- prototypes/RASTERIZER_XBOX_HARDWARE_GEOMETRY.C */
 
-/* The native builds make buffers for the geometry of Halo Custom Edition
-maps, which Xbox caches carry ready made (port/linux/game/
-custom_edition_geometry.c). Nothing in January calls these. */
+/* port: the native builds make buffers for the geometry of Halo Custom
+Edition maps, which Xbox caches carry ready made
+(port/linux/game/custom_edition_geometry.c) */
 boolean rasterizer_vertex_buffer_new(
 	struct vertex_buffer *vertex_buffer,
 	long vertex_type,

@@ -87,10 +87,6 @@ enum
 	_bitmap_linear_bit,
 };
 
-/* xbox_texture_cache.c makes linear textures with the row pitch in units
-of this, rounded down */
-#define LINEAR_TEXTURE_PITCH_ALIGNMENT 64
-
 /* ---------- structures */
 
 /* A model shader, to its reflection cube map: the bitmaps it draws with.
@@ -155,9 +151,13 @@ typedef char verify_weapon_hud_meter_element_size[
 
 /* a bitmap whose channels Halo PC keeps elsewhere than this build reads
 them from */
+/* one bitmap of a bitmap tag: the renderer reorders each texture's channels
+on its own, so a meter and a static drawing other bitmaps of one tag each
+get their own order */
 struct reordered_bitmap
 {
 	long handle;
+	short bitmap_index;
 	/* an enum custom_edition_channel_order */
 	byte channel_order;
 	/* also drawn in another order, or as a texture whose channels are this
@@ -236,16 +236,20 @@ static boolean custom_edition_bitmap_drawable(
 		bitmap->pixels_size >= bitmap_get_pixel_data_size(bitmap);
 }
 
-/* where `handle` is in the list of reordered bitmaps, or NONE */
+/* where bitmap `bitmap_index` of the tag `handle` names is in the list of
+reordered bitmaps, or NONE */
 static long reordered_bitmap_index(
-	long handle)
+	long handle,
+	long bitmap_index)
 {
 	struct custom_edition_bitmaps_globals *globals = &custom_edition_bitmaps_globals;
 	long index;
 
 	for (index = 0; index < globals->reordered_bitmap_count; index++)
 	{
-		if (globals->reordered_bitmaps[index].handle == handle)
+		struct reordered_bitmap const *bitmap = &globals->reordered_bitmaps[index];
+
+		if (bitmap->handle == handle && bitmap->bitmap_index == bitmap_index)
 		{
 			return index;
 		}
@@ -254,30 +258,28 @@ static long reordered_bitmap_index(
 	return NONE;
 }
 
-/* Lists the bitmap `handle` names, when it names one, as drawn in the
-channel order `channel_order`; FALSE after logging why when there is no
-memory for it. */
-static boolean reordered_bitmap_add(
-	byte *tag_cache,
-	unsigned long loaded_bytes,
+/* Lists bitmap `bitmap_index` of the tag `handle` names as drawn in the
+channel order `channel_order`, or as it is (NONE); FALSE after logging why
+when there is no memory for it. */
+static boolean reordered_bitmap_mark(
 	long handle,
-	byte channel_order)
+	long bitmap_index,
+	short channel_order)
 {
 	struct custom_edition_bitmaps_globals *globals = &custom_edition_bitmaps_globals;
-	long index;
+	long index = reordered_bitmap_index(handle, bitmap_index);
 	struct reordered_bitmap *bitmap;
 
-	if (!custom_edition_cache_tag_get(tag_cache, loaded_bytes, (unsigned long)handle, BITMAP_GROUP_TAG, sizeof(struct bitmap_group)))
-	{
-		return TRUE;
-	}
-	index = reordered_bitmap_index(handle);
 	if (index != NONE)
 	{
 		if (globals->reordered_bitmaps[index].channel_order != channel_order)
 		{
 			globals->reordered_bitmaps[index].drawn_otherwise = TRUE;
 		}
+		return TRUE;
+	}
+	if (channel_order == NONE)
+	{
 		return TRUE;
 	}
 	if (globals->reordered_bitmap_count == globals->reordered_bitmap_capacity)
@@ -295,23 +297,79 @@ static boolean reordered_bitmap_add(
 	}
 	bitmap = &globals->reordered_bitmaps[globals->reordered_bitmap_count++];
 	bitmap->handle = handle;
-	bitmap->channel_order = channel_order;
+	bitmap->bitmap_index = (short)bitmap_index;
+	bitmap->channel_order = (byte)channel_order;
 	bitmap->drawn_otherwise = FALSE;
 
 	return TRUE;
 }
 
-/* the bitmap `handle` names is drawn as a texture whose channels are this
-build's */
-static void reordered_bitmap_drawn_otherwise(
-	long handle)
+/* Lists the bitmaps that sequence `sequence_index` of the bitmap tag `handle`
+names draws (its bitmaps, or its sprites'; all the tag's for NONE or a
+sequence it has not got) as drawn in `channel_order`, or as they are
+(NONE). FALSE when there is no memory for them. */
+static boolean reordered_bitmaps_mark(
+	byte *tag_cache,
+	unsigned long loaded_bytes,
+	long handle,
+	short sequence_index,
+	short channel_order)
 {
-	long index = reordered_bitmap_index(handle);
+	struct bitmap_group *group = custom_edition_cache_tag_get(
+		tag_cache, loaded_bytes, (unsigned long)handle, BITMAP_GROUP_TAG, sizeof(struct bitmap_group));
+	struct bitmap_group_sequence *sequence = group && sequence_index != NONE ?
+		custom_edition_cache_block_element(tag_cache, loaded_bytes, &group->sequences, sequence_index, sizeof(*sequence)) :
+		NULL;
+	boolean marked = TRUE;
+	long index;
 
-	if (index != NONE)
+	if (!group)
 	{
-		custom_edition_bitmaps_globals.reordered_bitmaps[index].drawn_otherwise = TRUE;
+		return TRUE;
 	}
+	if (sequence && sequence->bitmap_count > 0)
+	{
+		for (index = 0; marked && index < sequence->bitmap_count; index++)
+			marked = reordered_bitmap_mark(handle, sequence->first_bitmap_index + index, channel_order);
+	}
+	else if (sequence && sequence->sprites.count > 0)
+	{
+		for (index = 0; marked && index < sequence->sprites.count; index++)
+		{
+			struct bitmap_group_sprite *sprite = custom_edition_cache_block_element(
+				tag_cache, loaded_bytes, &sequence->sprites, index, sizeof(*sprite));
+
+			if (!sprite)
+				break;
+			marked = reordered_bitmap_mark(handle, sprite->bitmap_index, channel_order);
+		}
+	}
+	else
+	{
+		for (index = 0; marked && index < group->bitmaps.count; index++)
+			marked = reordered_bitmap_mark(handle, index, channel_order);
+	}
+
+	return marked;
+}
+
+/* the bitmaps a HUD meter draws, in Halo PC's meter order */
+static boolean meter_bitmaps_mark(
+	byte *tag_cache,
+	unsigned long loaded_bytes,
+	struct meter_hud_element_definition const *meter)
+{
+	return reordered_bitmaps_mark(tag_cache, loaded_bytes, meter->meter_bitmap.index, meter->sequence_index,
+		_custom_edition_channels_hud_meter);
+}
+
+/* the bitmaps a HUD static element draws as they are */
+static void static_bitmaps_mark(
+	byte *tag_cache,
+	unsigned long loaded_bytes,
+	struct static_hud_element_definition const *element)
+{
+	reordered_bitmaps_mark(tag_cache, loaded_bytes, element->interface_bitmap.index, element->sequence_index, NONE);
 
 	return;
 }
@@ -323,8 +381,8 @@ static boolean unit_hud_meters_add(
 	struct unit_hud_interface_definition *hud)
 {
 	boolean added =
-		reordered_bitmap_add(tag_cache, loaded_bytes, hud->shield_meter.meter.meter_bitmap.index, _custom_edition_channels_hud_meter) &&
-		reordered_bitmap_add(tag_cache, loaded_bytes, hud->health_meter.meter.meter_bitmap.index, _custom_edition_channels_hud_meter);
+		meter_bitmaps_mark(tag_cache, loaded_bytes, &hud->shield_meter.meter) &&
+		meter_bitmaps_mark(tag_cache, loaded_bytes, &hud->health_meter.meter);
 	long meter_index;
 
 	for (meter_index = 0; added && meter_index < hud->auxilary_meters.count; meter_index++)
@@ -341,7 +399,7 @@ static boolean unit_hud_meters_add(
 		{
 			break;
 		}
-		added = reordered_bitmap_add(tag_cache, loaded_bytes, meter->panel.meter.meter_bitmap.index, _custom_edition_channels_hud_meter);
+		added = meter_bitmaps_mark(tag_cache, loaded_bytes, &meter->panel.meter);
 	}
 
 	return added;
@@ -355,11 +413,11 @@ static void unit_hud_statics_note(
 {
 	long element_index;
 
-	reordered_bitmap_drawn_otherwise(hud->background.interface_bitmap.index);
-	reordered_bitmap_drawn_otherwise(hud->shield_meter.background.interface_bitmap.index);
-	reordered_bitmap_drawn_otherwise(hud->health_meter.background.interface_bitmap.index);
-	reordered_bitmap_drawn_otherwise(hud->motion_sensor.background.interface_bitmap.index);
-	reordered_bitmap_drawn_otherwise(hud->motion_sensor.foreground.interface_bitmap.index);
+	static_bitmaps_mark(tag_cache, loaded_bytes, &hud->background);
+	static_bitmaps_mark(tag_cache, loaded_bytes, &hud->shield_meter.background);
+	static_bitmaps_mark(tag_cache, loaded_bytes, &hud->health_meter.background);
+	static_bitmaps_mark(tag_cache, loaded_bytes, &hud->motion_sensor.background);
+	static_bitmaps_mark(tag_cache, loaded_bytes, &hud->motion_sensor.foreground);
 	for (element_index = 0; element_index < hud->auxilary_panel.auxilary_overlays.count; element_index++)
 	{
 		struct auxilary_overlay_definition *overlay = custom_edition_cache_block_element(
@@ -373,7 +431,7 @@ static void unit_hud_statics_note(
 		{
 			break;
 		}
-		reordered_bitmap_drawn_otherwise(overlay->static_element.interface_bitmap.index);
+		static_bitmaps_mark(tag_cache, loaded_bytes, &overlay->static_element);
 	}
 	for (element_index = 0; element_index < hud->auxilary_meters.count; element_index++)
 	{
@@ -388,7 +446,7 @@ static void unit_hud_statics_note(
 		{
 			break;
 		}
-		reordered_bitmap_drawn_otherwise(meter->panel.background.interface_bitmap.index);
+		static_bitmaps_mark(tag_cache, loaded_bytes, &meter->panel.background);
 	}
 
 	return;
@@ -416,7 +474,7 @@ static boolean weapon_hud_meters_add(
 		{
 			break;
 		}
-		added = reordered_bitmap_add(tag_cache, loaded_bytes, meter->meter_element.meter_bitmap.index, _custom_edition_channels_hud_meter);
+		added = meter_bitmaps_mark(tag_cache, loaded_bytes, &meter->meter_element);
 	}
 
 	return added;
@@ -443,7 +501,7 @@ static void weapon_hud_statics_note(
 		{
 			break;
 		}
-		reordered_bitmap_drawn_otherwise(element->static_element.interface_bitmap.index);
+		static_bitmaps_mark(tag_cache, loaded_bytes, &element->static_element);
 	}
 
 	return;
@@ -458,7 +516,6 @@ boolean custom_edition_bitmaps_verify(
 	struct bitmap_group *group;
 	int32_t tag_index = NONE;
 	long bitmap_count = 0;
-	long misaligned_count = 0;
 
 	while ((group = custom_edition_cache_tag_next(tag_cache, loaded_bytes, BITMAP_GROUP_TAG, sizeof(*group), &tag_index)) != NULL)
 	{
@@ -483,27 +540,13 @@ boolean custom_edition_bitmaps_verify(
 					bitmap->flags);
 				return FALSE;
 			}
-			if (TEST_FLAG(bitmap->flags, _bitmap_linear_bit) &&
-				bitmap_mipmap_get_row_pitch(bitmap, 0) % LINEAR_TEXTURE_PITCH_ALIGNMENT)
-			{
-				/* rasterizer_xbox_bitmap_rebuild_hardware_format pads the rows,
-				but the texture's header gets the unpadded pitch rounded down */
-				error(
-					_error_silent,
-					"custom edition: bitmap %ld of '%s' is linear with %ld-byte rows, which this build draws with the wrong row pitch",
-					bitmap_index,
-					custom_edition_cache_tag_name(tag_cache, loaded_bytes, tag_index),
-					bitmap_mipmap_get_row_pitch(bitmap, 0));
-				misaligned_count++;
-			}
 			bitmap_count++;
 		}
 	}
 	error(
 		_error_silent,
-		"custom edition: %ld bitmaps can be drawn (%ld with misaligned rows)",
-		bitmap_count,
-		misaligned_count);
+		"custom edition: %ld bitmaps can be drawn",
+		bitmap_count);
 
 	return TRUE;
 }
@@ -527,7 +570,7 @@ boolean custom_edition_reordered_bitmaps_find(
 	tag_index = NONE;
 	while ((shader = custom_edition_cache_tag_next(tag_cache, loaded_bytes, SHADER_MODEL_GROUP_TAG, sizeof(*shader), &tag_index)) != NULL)
 	{
-		if (!reordered_bitmap_add(tag_cache, loaded_bytes, shader->multipurpose_map.index, _custom_edition_channels_multipurpose))
+		if (!reordered_bitmaps_mark(tag_cache, loaded_bytes, shader->multipurpose_map.index, NONE, _custom_edition_channels_multipurpose))
 		{
 			return FALSE;
 		}
@@ -554,9 +597,9 @@ boolean custom_edition_reordered_bitmaps_find(
 	tag_index = NONE;
 	while ((shader = custom_edition_cache_tag_next(tag_cache, loaded_bytes, SHADER_MODEL_GROUP_TAG, sizeof(*shader), &tag_index)) != NULL)
 	{
-		reordered_bitmap_drawn_otherwise(shader->base_map.index);
-		reordered_bitmap_drawn_otherwise(shader->detail_map.index);
-		reordered_bitmap_drawn_otherwise(shader->reflection_cube_map.index);
+		reordered_bitmaps_mark(tag_cache, loaded_bytes, shader->base_map.index, NONE, NONE);
+		reordered_bitmaps_mark(tag_cache, loaded_bytes, shader->detail_map.index, NONE, NONE);
+		reordered_bitmaps_mark(tag_cache, loaded_bytes, shader->reflection_cube_map.index, NONE, NONE);
 	}
 	tag_index = NONE;
 	while ((unit_hud = custom_edition_cache_tag_next(tag_cache, loaded_bytes, UNIT_HUD_INTERFACE_DEFINITION_TAG, sizeof(*unit_hud), &tag_index)) != NULL)
@@ -579,7 +622,8 @@ boolean custom_edition_reordered_bitmaps_find(
 		{
 			error(
 				_error_silent,
-				"custom edition: '%s' is drawn with Halo PC's %s channels and otherwise too, and keeps its channels as they are",
+				"custom edition: bitmap %d of '%s' is drawn with Halo PC's %s channels and otherwise too, and keeps its channels as they are",
+				bitmap->bitmap_index,
 				custom_edition_cache_tag_name(tag_cache, loaded_bytes, DATUM_INDEX_TO_ABSOLUTE_INDEX(bitmap->handle)),
 				bitmap->channel_order == _custom_edition_channels_multipurpose ? "multipurpose map" : "HUD meter");
 			*bitmap = globals->reordered_bitmaps[--globals->reordered_bitmap_count];
@@ -653,9 +697,9 @@ void custom_edition_bitmap_pixels_arrived(
 	{
 		struct bitmap_data *bitmap = TAG_BLOCK_GET_ELEMENT(&group->bitmaps, bitmap_index, struct bitmap_data);
 
-		if (bitmap->base_address == pixels && bitmap->pixels_offset == offset)
+		if (xbox_pointer(bitmap->base_address) == pixels && bitmap->pixels_offset == offset)
 		{
-			long reordered_index = reordered_bitmap_index(tag_index);
+			long reordered_index = reordered_bitmap_index(tag_index, bitmap_index);
 
 			/* the texture cache reuses its memory for other bitmaps, so the
 			renderer is told of every bitmap arriving */

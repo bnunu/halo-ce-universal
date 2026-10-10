@@ -77,21 +77,6 @@ The game can play system link games on a local network and on the internet:
   and the host makes the decisions for the game. Refer to
   [port/linux/NETCODE.md](port/linux/NETCODE.md).
 
-## Halo Custom Edition maps
-
-The game can load Halo Custom Edition maps (`.map`) and OpenSauce maps
-(`.yelo`). This function is experimental, and it is off by default:
-
-1. Set `custom_edition = true` in the `[game]` section of `config.toml`.
-2. Put the map in the `maps/` folder, with the `bitmaps.map`, `sounds.map`
-   and `loc.map` of Halo Custom Edition.
-3. Start the map from `init.txt` in the data root.
-
-The Windows build was tested with three maps: `bloodgulch.map`,
-`beavercreek_halo3.yelo` and `hugeass.map`. Other maps can use functions
-that the port does not have. Ogg Vorbis sounds do not play. Refer to
-[docs/custom_edition_caches.md](docs/custom_edition_caches.md).
-
 ## Build the game
 
 You do not need the Xbox SDK. The port supplies the SDK declarations that
@@ -125,11 +110,12 @@ Give these options to `configure.py`:
 | --- | --- |
 | (none) | A debug build. A failed assertion stops the game. |
 | `--release` | A release build. The game does not examine assertions, as in the retail game. |
-| `--portable` | The Linux and Windows builds operate on all x86-64 processors. Use this option for builds that you give to other persons. |
+| `--portable` | The Linux and Windows builds operate on all x86-64 processors. The Linux build also operates on older distributions and on SteamOS: refer to "Portable build" in [port/linux/README.md](port/linux/README.md#portable-build). Use this option for builds that you give to other persons. |
 | `--gles` | The Linux and Windows builds show their graphics with OpenGL ES 3, not with OpenGL 4.5. Use this option for graphics hardware that has no OpenGL 4.5. Refer to "Graphics hardware without OpenGL 4.5" in [port/windows/README.md](port/windows/README.md#graphics-hardware-without-opengl-45). |
 | `--lto=thin`, `--lto=off` | Less link-time optimization. The link is faster. |
 | `--pgo=off` | No profile-guided optimization. |
 | `--pgo=train` | Records a new optimization profile. Refer to "Optimization profiles". |
+| `--profile` | A profiling build. It records CPU times. Refer to "Profiling builds". |
 
 Without `--portable`, the Linux and Windows builds use all the instructions
 of the processor that builds them (`-march=native`). Such a build does not
@@ -154,3 +140,40 @@ To record a new profile:
 The build then plays the main menu and the first minute of each campaign
 level. This procedure continues for approximately 15 minutes. The game
 data must be in `assets/`.
+
+### Profiling builds
+
+A profiling build records where the game spends its time.
+
+1. Enter `python configure.py --profile`, then build as usual.
+2. Start a recording. Enter `profile_record` in the console (or the telnet
+   console), or set `debug.profile_record = true` in `config.toml`. To
+   record each game of a session, also set
+   `debug.profile_record_when = "game"`.
+3. Stop the recording. Enter `profile_stop`, load another map, or quit.
+
+The game writes numbered `.part<n>.json` files under `profiles/` in its data root
+and logs their paths. Parts are retained after the recording stops. Logs go to
+standard error; a Windows release build without standard error writes them to
+`halo.log` next to `halo.exe`.
+
+`tools/net_report.py` is a helper for developers. Enter
+`python tools/net_report.py <recording.part1.json>` to read a recording
+as tables. The command also writes `<recording>.summary.txt`, a short text
+file.
+
+| Command | Result |
+| --- | --- |
+| `profile_record [seconds]` | Starts a recording. With a number of seconds, the recording stops after that time. |
+| `profile_stop` | Stops the recording. |
+
+`debug.profile_memory` sets the memory of a recording in MB (default 256,
+from 4 to 1024). A recording has no length limit:
+the game writes a part each time the memory is full. Refer to "Settings" in
+[port/linux/README.md](port/linux/README.md).
+
+On Android, the files are in `/sdcard/Android/data/com.halo.decomp/files/profiles/`.
+Enter `adb pull` to copy the recording parts to a computer.
+
+A profiling build plays with normal builds. It does not use
+`--pgo=train`.

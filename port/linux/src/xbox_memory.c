@@ -13,9 +13,9 @@ virtual window at start-up and allocates page-granular blocks inside it:
 placed requests at exactly the address asked for, the rest top-down as the
 Xbox kernel does.
 
-The experimental Halo Custom Edition map loading needs the window Custom
-Edition tag data are linked to, 0x40440000, reserved the same way when the
-game.custom_edition setting is on (docs/custom_edition_caches.md).
+Halo Custom Edition maps need the window their tag data is linked to,
+0x40440000, reserved the same way when the game.custom_edition setting is on
+(port/linux/game/custom_edition_cache.c).
 */
 
 #include "platform.h"
@@ -72,10 +72,9 @@ static void contiguous_arena_reserve(void)
 	}
 }
 
-/* The Custom Edition tag cache, with room for OpenSauce's memory upgrades,
-reserved and committed (lazily, pages are backed when touched) before
-anything else can map into it; only when asked for, since it takes 36 MB of
-address space below 2 GB. */
+/* The Custom Edition tag cache, reserved before anything else can map into
+it (its pages are backed as they are touched); only when Custom Edition maps
+may run, as it takes 23 MB of the address space. */
 __attribute__((constructor(102)))
 static void custom_edition_tag_cache_reserve(void)
 {
@@ -84,7 +83,7 @@ static void custom_edition_tag_cache_reserve(void)
 
 	if (!config_boolean("game.custom_edition"))
 		return;
-	result = mmap(wanted, CUSTOM_EDITION_TAG_CACHE_BYTES_UPGRADED, PROT_READ | PROT_WRITE,
+	result = mmap(wanted, CUSTOM_EDITION_TAG_CACHE_BYTES, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
 	if (result == wanted)
 	{
@@ -93,8 +92,8 @@ static void custom_edition_tag_cache_reserve(void)
 	else
 	{
 		if (result != MAP_FAILED)
-			munmap(result, CUSTOM_EDITION_TAG_CACHE_BYTES_UPGRADED);
-		platform_log("cannot reserve the Custom Edition tag cache at %p (%s)",
+			munmap(result, CUSTOM_EDITION_TAG_CACHE_BYTES);
+		platform_log("cannot reserve the Custom Edition tag cache at %p (%s): Custom Edition maps cannot run",
 			wanted, strerror(errno));
 	}
 }

@@ -36,12 +36,12 @@ symbols in this file:
 #define MULTIPLAYER_GAME_TEXT_TAG_NAME "ui\\multiplayer_game_text"
 #define FIRST_FALLBACK_MULTIPLAYER_GAME_TEXT_STRING 36
 
-/* the multiplayer level list's level names and descriptions, beyond which
-the Custom Edition maps after the Xbox levels have their display indices
-(port/linux/game/custom_edition_maps.c) */
+/* the multiplayer level list's level names and descriptions, past which the
+Custom Edition maps after the Xbox levels have their display indices
+(port/linux/game/custom_edition_maps.c), and the PC menus' copies of them
+(port/linux/game/menu_tags.c) */
 #define LEVEL_NAMES_TAG_NAME "ui\\shell\\main_menu\\mp_map_list"
 #define LEVEL_DESCRIPTIONS_TAG_NAME "ui\\shell\\main_menu\\multiplayer_type_select\\mp_map_select\\map_data"
-/* (and the PC menus' own: port/linux/game/menu_tags.c) */
 #define PC_LEVEL_NAMES_TAG_NAME "pc\\main_menu\\mp_map_list"
 #define PC_LEVEL_DESCRIPTIONS_TAG_NAME "pc\\main_menu\\multiplayer_type_select\\mp_map_select\\map_data"
 
@@ -207,24 +207,18 @@ static wchar_t *const fallback_multiplayer_game_text_strings[] =
 typedef char fallback_multiplayer_game_text_string_count_check[
 	NUMBEROF(fallback_multiplayer_game_text_strings) == 184 - FIRST_FALLBACK_MULTIPLAYER_GAME_TEXT_STRING ? 1 : -1];
 
-/* the built-in string for a string list too short to hold string_index
-(an NTSC map's multiplayer string, a Custom Edition map's name or
-description), or NULL */
+/* the built-in string for a string list too short to hold string_index,
+or NULL */
 static wchar_t *fallback_string(long tag_index, short string_index)
 {
 	char const *tag_name = tag_get_name(tag_index);
 	short fallback_index = string_index - FIRST_FALLBACK_MULTIPLAYER_GAME_TEXT_STRING;
 
-	if (!csstrcasecmp(tag_name, LEVEL_NAMES_TAG_NAME) ||
-		!csstrcasecmp(tag_name, PC_LEVEL_NAMES_TAG_NAME))
-	{
+	/* (a Custom Edition map's name or description, by its display index) */
+	if (!csstrcasecmp(tag_name, LEVEL_NAMES_TAG_NAME) || !csstrcasecmp(tag_name, PC_LEVEL_NAMES_TAG_NAME))
 		return custom_edition_maps_name(string_index);
-	}
-	if (!csstrcasecmp(tag_name, LEVEL_DESCRIPTIONS_TAG_NAME) ||
-		!csstrcasecmp(tag_name, PC_LEVEL_DESCRIPTIONS_TAG_NAME))
-	{
+	if (!csstrcasecmp(tag_name, LEVEL_DESCRIPTIONS_TAG_NAME) || !csstrcasecmp(tag_name, PC_LEVEL_DESCRIPTIONS_TAG_NAME))
 		return custom_edition_maps_description(string_index);
-	}
 	if (fallback_index < 0 ||
 		fallback_index >= (short)NUMBEROF(fallback_multiplayer_game_text_strings) ||
 		csstrcasecmp(tag_name, MULTIPLAYER_GAME_TEXT_TAG_NAME))
@@ -277,7 +271,9 @@ wchar_t *unicode_string_list_get_string(long tag_index, short string_index)
 				string_index,
 				struct string_list_entry);
 
-			if (entry->string.size > 0)
+			/* port: only a string of at least one character, terminated
+			within it (a size of 1 wrote the terminator before its data) */
+			if (entry->string.size >= (long)sizeof(wchar_t))
 			{
 				result = entry->string.address;
 				result[entry->string.size / sizeof(wchar_t) - 1] = L'\0';

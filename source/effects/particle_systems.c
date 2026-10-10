@@ -1540,14 +1540,28 @@ static void particle_system_render(
 					}
 
 					bitmap = bitmap_group_get(state_definition->bitmaps.index);
+					/* port: rotational sprites use the sequence after the state's. Some
+					Custom Edition bitmaps don't have one (on foundation), so those
+					draw from the state's own sequence. */
 					if (type_definition->complex_sprite_render_mode ==
-						_particle_system_type_complex_sprite_render_mode_rotational)
+						_particle_system_type_complex_sprite_render_mode_rotational &&
+						state_definition->sequence_index + 1 < bitmap->sequences.count)
 					{
 						sequence_index = state_definition->sequence_index + 1;
 					}
 					else
 					{
 						sequence_index = state_definition->sequence_index;
+					}
+					/* port: a bitmap without that sequence, or with no sprites in it,
+					draws nothing (a Custom Edition map's can: Hornets Nest's), where
+					this read past its sequences and divided by its sprite count */
+					if (!VALID_INDEX(sequence_index, bitmap->sequences.count) ||
+						TAG_BLOCK_GET_ELEMENT(&bitmap->sequences, sequence_index,
+							struct bitmap_group_sequence)->sprites.count <= 0)
+					{
+						particle_index = (short)particle->next_particle_index;
+						continue;
 					}
 					sequence = TAG_BLOCK_GET_ELEMENT(
 						&bitmap->sequences,

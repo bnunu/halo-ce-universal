@@ -1,8 +1,8 @@
 /*
 MSVC_CRT.C
 
-Microsoft C runtime functions the game (and its copies of libtiff and zlib)
-call that glibc does not provide under the same names, plus the Xbox-path
+Microsoft C runtime functions the game (and its copy of zlib) call that
+glibc does not provide under the same names, plus the Xbox-path
 aware fopen/open family that the game's headers redirect to (see
 port/linux/include/stdio.h).
 */
@@ -295,7 +295,7 @@ static unsigned short msvc_to_control_word(unsigned int value, unsigned short wo
 	return word;
 }
 
-#ifdef HALO_ANDROID
+#ifdef HALO_ARM64_GUEST
 /* AArch64: the rounding mode lives in FPCR.RMode, the sticky exception
 flags in FPSR. Precision control and exception unmasking have no
 equivalent; the rest of the MSVC control word is only remembered. */
@@ -678,7 +678,8 @@ int _fileno(FILE *stream)
 	return fileno(stream);
 }
 
-/* libtiff maps its POSIX calls onto the MSVC underscore names itself */
+/* the MSVC underscore names of the POSIX file calls (the game's libtiff
+used them; the builds leave it out: port.json) */
 
 int _open(const char *path, int flags, ...)
 {

@@ -171,27 +171,27 @@ int host_gl_has_extension(const char *name)
 	return 0;
 }
 
-/* one 32-bit word of a buffer object (the visibility test counters of
-d3d8_gl.c); ES has no glGetBufferSubData */
-unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset)
+/* size bytes of a buffer object (the snapshots of the visibility tests'
+counters, d3d8_gl.c), as the Android host copies them
+(port/android/host/host_gl.c): ES has no glGetBufferSubData. Binds
+GL_COPY_READ_BUFFER, which the renderer uses only for its copies, and
+leaves it unbound. */
+void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int size, void *data)
 {
-	unsigned int value = 0;
-	GLint previous = 0;
 	const void *mapping;
 
+	memset(data, 0, size);
 	gles_load();
 	if (!gles_glMapBufferRange || !gles_glUnmapBuffer)
-		return 0;
-	glGetIntegerv(GL_ATOMIC_COUNTER_BUFFER_BINDING, &previous);
-	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, buffer);
-	mapping = gles_glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER, offset, sizeof(value), GL_MAP_READ_BIT);
+		return;
+	glBindBuffer(GL_COPY_READ_BUFFER, buffer);
+	mapping = gles_glMapBufferRange(GL_COPY_READ_BUFFER, offset, size, GL_MAP_READ_BIT);
 	if (mapping)
 	{
-		memcpy(&value, mapping, sizeof(value));
-		gles_glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+		memcpy(data, mapping, size);
+		gles_glUnmapBuffer(GL_COPY_READ_BUFFER);
 	}
-	glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, (GLuint)previous);
-	return value;
+	glBindBuffer(GL_COPY_READ_BUFFER, 0);
 }
 
 /* a fence at the end of a frame's work, and the wait for it before its

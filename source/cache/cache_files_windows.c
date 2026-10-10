@@ -190,7 +190,7 @@ symbols in this file:
 #include "tag_files/tag_files.h"
 #include "scenario/scenario_definitions.h"
 #include "rasterizer/rasterizer.h"
-#include "custom_edition_cache.h"
+#include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 
 #include <xtl.h>
 
@@ -582,12 +582,11 @@ boolean cache_files_precache_is_copying_map(
 boolean cache_files_precache_map_loaded(
 	const char *map_name)
 {
-	/* a Halo Custom Edition map, when those may run, is read in place and
-	never copied to the cache partition (port/linux/game/custom_edition_cache.c) */
-	if (custom_edition_cache_playable(map_name))
-	{
-		return TRUE;
-	}
+	/* port: a Halo Custom Edition map (custom_maps\<name>) is read in place
+	and never copied to the cache partition; it is never the game's own map
+	of that file name (port/linux/game/custom_edition_cache.c) */
+	if (custom_edition_level_name(map_name))
+		return custom_edition_cache_playable(map_name);
 	return cached_map_files_find_map(tag_name_strip_path(map_name)) != NONE;
 }
 
@@ -600,6 +599,19 @@ boolean cache_files_precache_map_begin(
 {
 	const char *cache_map_name = tag_name_strip_path(map_name);
 
+	/* port: a Halo Custom Edition map (custom_maps\<name>) this machine has
+	not is missing, as a map not on the DVD is: never the game's own map of
+	its file name (port/linux/game/custom_edition_cache.c) */
+	if (custom_edition_level_name(map_name) && !custom_edition_cache_playable(map_name))
+	{
+		error(_error_silent, "couldn't find the Custom Edition map '%s' in custom_maps", map_name);
+		if (copy_map)
+		{
+			display_error_damaged_media();
+		}
+
+		return FALSE;
+	}
 	if (!cache_files_precache_map_loaded(map_name))
 	{
 		struct cache_file_header header;
@@ -697,13 +709,10 @@ void cache_files_initialize(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
 		188,
 		cache_file_globals.requests);
-	/* cache_file_open clears the requests before an Xbox map is read; a
-	Halo Custom Edition map is read without it, so they start out free
+	/* port: cache_file_open clears the requests before a map is read; a Halo
+	Custom Edition map is read without it, so they start out free
 	(port/linux/game/custom_edition_cache.c) */
-	memset(
-		cache_file_globals.requests,
-		0,
-		MAXIMUM_SIMULTANEOUS_CACHE_REQUESTS * sizeof(struct cache_file_request));
+	memset(cache_file_globals.requests, 0, MAXIMUM_SIMULTANEOUS_CACHE_REQUESTS * sizeof(struct cache_file_request));
 	cache_file_windows_thread_create();
 	cache_files_verify_language();
 	cache_files_open_cache_files();
@@ -848,8 +857,8 @@ short cache_file_read(
 	short request_index = cache_request_next_free_index();
 	struct cache_file_request *request = cache_request_get(request_index);
 
-	/* reads of a Halo Custom Edition map are served in place, at once; the
-	request slot stays free (port/linux/game/custom_edition_cache.c) */
+	/* port: the reads of a Halo Custom Edition map are served in place, at
+	once; the request stays free (port/linux/game/custom_edition_cache.c) */
 	if (custom_edition_cache_tags_loaded())
 	{
 		custom_edition_cache_read(tag_index, offset, size, buffer);
@@ -908,7 +917,7 @@ short cache_file_read(
 short cache_files_precache_map_status(
 	real *progress)
 {
-	short status;
+	short status = _cached_map_file_failed;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\cache\\cache_files_windows.c",
@@ -934,10 +943,6 @@ short cache_files_precache_map_status(
 			status = _cached_map_file_success;
 			break;
 
-		/* status is left unassigned only by this default arm. Not reached unassigned: the
-		 * arm's assertion failure calls system_exit, which does not return in January
-		 * (0x47c960 jumps to halt_and_catch_fire 0x4f21c0, which loops or calls exit).
-		 * Source-policy approval pending (2026-09-27 audit). */
 		default:
 			match_vassert("c:\\halo\\SOURCE\\cache\\cache_files_windows.c", 1013, FALSE, NULL);
 			break;
@@ -1254,12 +1259,6 @@ static void cache_file_get_map_path(
 		error(_error_silent, "map path for '%.64s' is too long", map_name);
 		path[0] = 0;
 	}
-	else
-	{
-		/* or the OpenSauce .yelo cache of that name, which the header check
-		names and refuses (port/linux/game/custom_edition_cache.c) */
-		opensauce_cache_path_find(path, MAXIMUM_MAP_PATH_LENGTH);
-	}
 
 	return;
 }
@@ -1329,10 +1328,6 @@ static short cached_map_files_find_free_map(
 			last_map_file_index = 2;
 			break;
 
-		/* first_map_file_index and last_map_file_index are left unassigned only by this default arm. Not reached unassigned: the
-		 * arm's assertion failure calls system_exit, which does not return in January
-		 * (0x47c960 jumps to halt_and_catch_fire 0x4f21c0, which loops or calls exit).
-		 * Source-policy approval pending (2026-09-27 audit). */
 		/* port: the type is the map's header's, and a release build's assertion
 		goes on: a type no cache file is for finds none */
 		default:
@@ -1689,7 +1684,13 @@ static struct cached_map_file *cached_map_file_get(
 static void cached_map_file_invalidate(
 	short map_file_index)
 {
-	cached_map_file_get(map_file_index)->file = INVALID_HANDLE_VALUE;
+	struct cached_map_file *map_file = cached_map_file_get(map_file_index);
+
+	if (map_file->file != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(map_file->file);
+	}
+	map_file->file = INVALID_HANDLE_VALUE;
 
 	return;
 }

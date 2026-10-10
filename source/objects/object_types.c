@@ -473,11 +473,11 @@ struct object_type_definition *object_type_definitions[NUMBER_OF_OBJECT_TYPES] =
 
 struct object_type_definition *first_object_type_definition;
 /* VC7 otherwise emits this tentative definition as a common symbol. */
-#ifndef HALO_ANDROID /* Mach-O section names differ; the default is .bss anyway */
+#ifndef HALO_ARM64_GUEST /* Mach-O section names differ; the default is .bss anyway */
 #pragma bss_seg(".bss")
 #endif
 static word processed_bsp_flags;
-#ifndef HALO_ANDROID
+#ifndef HALO_ARM64_GUEST
 #pragma bss_seg()
 #endif
 
@@ -1220,15 +1220,15 @@ void object_types_place_all(
 							scenario_datum_index,
 							element_size);
 
-					/* port: the gametype's vehicles of each team (game_variant_options:
-					every machine places the same). A Halo Custom Edition map places
-					the vehicles its placements' multiplayer spawn flags name for the
-					game type instead, as retail Halo does
-					(port/linux/game/custom_edition_objects.c) */
+					/* port: a Halo Custom Edition map's vehicles are those its
+					placements' multiplayer spawn flags name for the game type, as
+					retail Halo's are (port/linux/game/custom_edition_objects.c);
+					then the gametype's vehicles of each team (game_variant_options:
+					every machine places the same), asked last as it counts those it
+					places */
 					if (object_type == _object_type_vehicle &&
-						!(custom_edition_vehicles_by_placement() ?
-							custom_edition_vehicle_placement_allowed(scenario_object) :
-							game_engine_vehicle_placement_allowed(scenario_object, scenario_palette)))
+						(!custom_edition_vehicle_placement_allowed(scenario_object) ||
+						!game_engine_vehicle_placement_allowed(scenario_object, scenario_palette)))
 					{
 						continue;
 					}

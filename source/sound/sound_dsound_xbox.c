@@ -31,7 +31,8 @@ enum
 	MAXIMUM_SOUND_PACKETS = 4,
 	MAXIMUM_SOUND_PACKET_SIZE = 8192,
 	MAXIMUM_COMPRESSED_SOUND_PACKET_SIZE = 2304,
-	SOUND_CACHE_SIZE = 0x400000,
+	/* port: the native builds' cache (halo_port_capacity.h) */
+	SOUND_CACHE_SIZE = HALO_PORT_SOUND_CACHE_SIZE,
 	SOUND_COMPRESSED_BLOCK_SIZE = 36,
 	SOUND_COMPRESSED_SAMPLES_PER_BLOCK = 64,
 	MAXIMUM_DSOUND_MIXBINS = 8
@@ -1928,6 +1929,51 @@ static void dsound_virtual_set_location(
 	return;
 }
 
+/* port: a stereo channel's sound in the world is panned towards it, and
+muffled and reverberated as a 3D channel's is (its I3DL2 source, from the
+same occlusion, obstruction and underwater listener), which the Xbox's
+stereo channels never were (sound_manager.c, update_channels;
+port/linux/src/dsound_sdl.c) */
+void dsound_port_set_channel_stereo_position(
+	short virtual_channel_index,
+	boolean positioned,
+	real pan,
+	real distance,
+	real minimum_distance,
+	real distance_fade,
+	real occlusion,
+	real obstruction,
+	boolean attenuate_direct_path)
+{
+	extern void dsound_sdl_stream_set_stereo_position(IDirectSoundStream *stream, BOOL positioned, float pan,
+		float distance, float minimum_distance, float distance_fade);
+	short channel_index= dsound_virtual_touch(virtual_channel_index);
+
+	if (channel_index!=NONE)
+	{
+		struct sound_channel *channel= channel_get(channel_index);
+
+		if (channel->stream && TEST_FLAG(channel->type_flags, _sound_channel_stereo_bit))
+		{
+			if (channel->spatialized!=positioned ||
+				!realcmp_epsilon(occlusion, channel->occlusion, 0.001f) ||
+				!realcmp_epsilon(obstruction, channel->obstruction, 0.001f) ||
+				channel->attenuate_direct_path!=attenuate_direct_path)
+			{
+				channel->spatialized= positioned;
+				channel->occlusion= occlusion;
+				channel->obstruction= obstruction;
+				channel->attenuate_direct_path= attenuate_direct_path;
+				dsound_channel_set_I3DL2_properties(channel_index);
+			}
+			dsound_sdl_stream_set_stereo_position(channel->stream, positioned, pan,
+				distance, minimum_distance, distance_fade);
+		}
+	}
+
+	return;
+}
+
 static void dsound_virtual_set_properties(
 	short virtual_channel_index,
 	struct platform_sound_channel_properties const *properties,
@@ -2384,12 +2430,16 @@ static void dsound_channel_set_properties(
 	boolean gain_only)
 {
 	struct sound_channel *channel= channel_get(channel_index);
-	real gain= dsound_globals.pause_gain*properties->gain;
+	/* port: a Custom Edition map's sound can be louder than a channel plays
+	(foundation's Reach sniper rifle fire has a gain modifier of 1.5); played
+	at full gain, as Halo PC does, rather than halting */
+	real prop_gain = PIN(properties->gain, 0.f, 1.f);
+	real gain= dsound_globals.pause_gain*prop_gain;
 
 	match_assert(
 		"c:\\halo\\SOURCE\\sound\\sound_dsound_xbox.c",
 		980,
-		properties->gain>=0.f && properties->gain<=1.f);
+		prop_gain>=0.f && prop_gain<=1.f);
 	match_assert(
 		"c:\\halo\\SOURCE\\sound\\sound_dsound_xbox.c",
 		981,
@@ -2505,6 +2555,17 @@ static void dsound_channel_set_properties(
 			{
 				channel->reverb_attenuation= properties->reverb_attenuation;
 
+				dsound_channel_set_I3DL2_properties(channel_index);
+			}
+		}
+		/* port: and a stereo channel's, whose sound in the world reverberates
+		as a 3D channel's does (dsound_port_set_channel_stereo_position) */
+		else if (TEST_FLAG(channel->type_flags, _sound_channel_stereo_bit) &&
+			!realcmp_epsilon(properties->reverb_attenuation, channel->reverb_attenuation, 0.001f))
+		{
+			channel->reverb_attenuation= properties->reverb_attenuation;
+			if (channel->spatialized)
+			{
 				dsound_channel_set_I3DL2_properties(channel_index);
 			}
 		}
@@ -2879,12 +2940,7 @@ static void dsound_error(
 			break;
 	}
 
-	/* BUG (preserved for exact matching): the format has three conversions but January
-	 * passes two values (0x5b93e0 +0x93..+0xa2), so "#%d" prints the next stack word.
-	 * Reached on every DirectSound failure reported through dsound_error. A corrected
-	 * build should pass result as the third value. Source-policy approval pending
-	 * (2026-09-27 audit). */
-	error(_error_silent, "DirectSound:  '%s' (%s#%d)", message, result_name);
+	error(_error_silent, "DirectSound:  '%s' (%s#%d)", message, result_name, (int)result);
 
 	return;
 }

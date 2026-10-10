@@ -2,9 +2,11 @@
 CACHE_FILE_FORMATS.H
 
 Recognition, validation and loading of the Halo 1 map files that this build
-did not ship with: Halo Custom Edition caches (version 609), the OpenSauce
-extension of their header (".yelo" maps), and the Custom Edition resource
-maps bitmaps.map, sounds.map and loc.map. docs/custom_edition_caches.md
+did not ship with: Halo Custom Edition caches (version 609) and the Custom
+Edition resource maps bitmaps.map, sounds.map and loc.map. A cache that
+needs OpenSauce (its header asks for memory upgrades, mod data files and the
+like) is refused; one that only carries OpenSauce's header and tags is run as
+stock Custom Edition runs it, without them. docs/custom_edition_caches.md
 defines what each milestone (recognize, load, run) means, which of them this
 module reaches, and the evidence behind every layout used here.
 
@@ -36,15 +38,15 @@ against the file or buffer it refers to before it is used.
 
 /* Halo PC and Custom Edition keep tag data at a fixed address, as the Xbox
 does at 0x803A6000: 0x40440000, above a 0x440000-byte game state at
-0x40000000, with 23 MB of room, or 1.5 times that for caches built with
-OpenSauce's memory upgrades (OpenSauce cache_constants.hpp,
-blam_memory_upgrades.hpp). Every map examined puts its structure BSPs at the
-top of that room. */
+0x40000000, with 23 MB of room (OpenSauce cache_constants.hpp). Every map
+examined puts its structure BSPs at the top of that room. */
 #define CUSTOM_EDITION_TAG_CACHE_ADDRESS 0x40440000UL
 #define CUSTOM_EDITION_TAG_CACHE_BYTES 0x01700000UL
-#define CUSTOM_EDITION_TAG_CACHE_BYTES_UPGRADED 0x02280000UL
-#define CUSTOM_EDITION_CACHE_FILE_MAXIMUM_BYTES 0x18000000UL
-#define CUSTOM_EDITION_CACHE_FILE_MAXIMUM_BYTES_UPGRADED 0x24000000UL
+/* the largest map: Halo PC's were 384 MiB, and Invader builds larger ones
+that Chimera runs. This build reads a map by its offsets, so the map need
+only fit before the sounds it decodes in the combined offset space
+(custom_edition_cache.c) */
+#define CUSTOM_EDITION_CACHE_FILE_MAXIMUM_BYTES 0x30000000UL
 
 enum cache_file_format
 {
@@ -72,19 +74,6 @@ enum resource_map_type
 	NUMBER_OF_RESOURCE_MAP_TYPES
 };
 
-/* the flags of the OpenSauce header (OpenSauce
-cache_files_structures_yelo.hpp, s_cache_header_yelo::s_flags) */
-enum opensauce_cache_flag
-{
-	_opensauce_cache_uses_memory_upgrades_bit,
-	_opensauce_cache_uses_mod_data_files_bit,
-	_opensauce_cache_is_protected_bit,
-	_opensauce_cache_uses_game_state_upgrades_bit,
-	_opensauce_cache_has_compression_parameters_bit,
-
-	NUMBER_OF_OPENSAUCE_CACHE_FLAGS
-};
-
 /* findings that do not stop a load but must be reported */
 enum custom_edition_warning
 {
@@ -93,9 +82,6 @@ enum custom_edition_warning
 	_custom_edition_warning_checksum_mismatch_bit,
 	/* bytes after the end the header declares that nothing refers to */
 	_custom_edition_warning_trailing_data_bit,
-	/* the map holds OpenSauce's project_yellow ('yelo') or
-	project_yellow_globals ('gelo') tags */
-	_custom_edition_warning_opensauce_tags_bit,
 
 	NUMBER_OF_CUSTOM_EDITION_WARNINGS
 };
@@ -117,11 +103,8 @@ enum cache_file_status
 	_cache_file_status_bad_file_length,
 	_cache_file_status_compressed_cache,
 	_cache_file_status_bad_tag_data_range,
-
-	/* the OpenSauce header */
-	_cache_file_status_bad_opensauce_header,
-	_cache_file_status_unknown_opensauce_flags,
-	_cache_file_status_bad_opensauce_definitions_range,
+	/* OpenSauce's header, asking for what only OpenSauce has */
+	_cache_file_status_opensauce_cache,
 
 	/* the tag index */
 	_cache_file_status_bad_tag_index_signature,
@@ -140,12 +123,12 @@ enum cache_file_status
 	_cache_file_status_bad_structure_bsp_header,
 	_cache_file_status_bad_structure_bsp_geometry,
 
-	/* model geometry */
+	/* model geometry and animation */
 	_cache_file_status_bad_model_part,
+	_cache_file_status_bad_animation_nodes,
 
 	/* conversion */
 	_cache_file_status_bad_shader_type,
-	_cache_file_status_bad_script_nodes,
 
 	/* resource maps and the tags they hold */
 	_cache_file_status_bad_resource_map_header,
@@ -177,36 +160,6 @@ struct cache_file_source
 	uint32_t size;
 };
 
-/* the OpenSauce header at offset 0x70 of a Custom Edition cache header */
-struct opensauce_cache_header
-{
-	int16_t version;
-	uint16_t flags;
-	uint8_t project_yellow_version;
-	uint8_t project_yellow_globals_version;
-	float memory_upgrade_amount;
-	/* the zlib-compressed tag definitions of the OpenSauce editing kit,
-	appended after the cache data */
-	uint32_t definitions_size;
-	uint32_t definitions_decompressed_size;
-	uint32_t definitions_offset;
-	char definitions_build[CACHE_FILE_STRING_BYTES];
-	char mod_name[CACHE_FILE_STRING_BYTES];
-	int16_t build_stage;
-	uint32_t build_revision;
-	int64_t build_timestamp;
-	char build_string[CACHE_FILE_STRING_BYTES];
-	uint8_t tools_version_major;
-	uint8_t tools_version_minor;
-	uint16_t tools_version_build;
-	uint8_t minimum_version_major;
-	uint8_t minimum_version_minor;
-	uint16_t minimum_version_build;
-	/* OpenSauce resource storage: compression parameters, tag symbols,
-	string ids, tag string to string id tables */
-	uint32_t resource_offsets[4];
-};
-
 struct cache_file_identity
 {
 	enum cache_file_format format;
@@ -222,8 +175,6 @@ struct cache_file_identity
 	uint32_t checksum;
 	char name[CACHE_FILE_STRING_BYTES];
 	char build[CACHE_FILE_STRING_BYTES];
-	int has_opensauce_header;
-	struct opensauce_cache_header opensauce;
 
 	/* resource maps */
 	enum resource_map_type resource_map_type;
@@ -279,6 +230,9 @@ struct custom_edition_load_report
 	uint32_t computed_checksum;
 	uint32_t trailing_bytes;
 	uint32_t warnings;
+	/* 1 when the scenario tag had another group (map protection renames it)
+	and was given the scenario's */
+	int32_t scenario_regrouped;
 };
 
 /* Where Halo PC keeps what a texture holds in other channels than this
@@ -302,6 +256,35 @@ enum custom_edition_channel_order
 	NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS
 };
 
+/* Halo PC behaviours some Custom Edition maps were made around, where Chimera
+fixes Halo PC to draw as the Xbox does (Chimera's map_hacks.hpp, by
+SnowyMouse). This build draws as the Xbox does, so a map listed as relying
+on one (custom_edition_behaviours.inc, by name and tag data checksum) is
+drawn as Halo PC drew it where this build can. */
+enum custom_edition_behaviour
+{
+	_custom_edition_behaviour_gearbox_chicago_multiply,
+	_custom_edition_behaviour_gearbox_meters,
+	/* HUD multitexture overlays' blend functions in Halo PC's order
+	(hud_draw.c) */
+	_custom_edition_behaviour_gearbox_multitexture_blend_modes,
+	_custom_edition_behaviour_alternate_bump_attenuation,
+	_custom_edition_behaviour_gearbox_bump_attenuation,
+	/* model shaders' detail after reflection flag means the opposite */
+	_custom_edition_behaviour_invert_detail_after_reflection,
+	_custom_edition_behaviour_embedded_lua,
+	/* the HUD digits are at the Xbox's size, not twice it */
+	_custom_edition_behaviour_hud_number_scale,
+	/* bitmaps' half HUD scale flags were set by mistake */
+	_custom_edition_behaviour_disable_bitmap_hud_scale_flags,
+	_custom_edition_behaviour_old_widescreen_fix,
+	_custom_edition_behaviour_gearbox_shader_environment_types,
+	/* HUD multitexture overlays are not drawn (hud_draw.c) */
+	_custom_edition_behaviour_block_multitexture_overlays,
+
+	NUMBER_OF_CUSTOM_EDITION_BEHAVIOURS
+};
+
 /* what custom_edition_cache_convert changed */
 struct custom_edition_conversion_report
 {
@@ -309,23 +292,41 @@ struct custom_edition_conversion_report
 	chicago extended shaders made transparent chicago ones */
 	int32_t shaders_retyped;
 	int32_t chicago_extended_shaders;
+	/* shaders whose type was not their group's, given their group's */
+	int32_t shaders_mistyped;
 	/* bitmaps given their own tag and the state of a bitmap not yet drawn */
 	int32_t bitmaps_prepared;
-	/* 1 when the scenario's script syntax nodes, upgraded by OpenSauce, were
-	made this build's number */
-	int32_t script_nodes_reduced;
+	/* ... of them drawn as linear: 2D, uncompressed, sides not powers of two */
+	int32_t bitmaps_made_linear;
 	/* animation graph object overlays that named an animation the graph
 	does not have, made to name none */
 	int32_t animation_overlays_disabled;
+	/* model and animation graph node links cut because they looped back or
+	pointed past the nodes */
+	int32_t node_links_cut;
 	/* sounds in a compression this build cannot decode (Ogg Vorbis), made
 	unplayable */
 	int32_t sounds_undecodable;
 	/* HUD element placements with Halo PC's high resolution scale, whose
 	scale was halved */
 	int32_t hud_placements_rescaled;
+	/* HUD meters whose minimum alpha (Halo PC's, where the Xbox's meters
+	have an overlays block) was taken out */
+	int32_t hud_meter_alphas_cleared;
+	/* weapon functions of Halo PC's inputs this build has not, made the
+	nearest it has */
+	int32_t weapon_functions_converted;
 	/* 1 when the multiplayer hint that a key shows the score was made to
 	name the Xbox button */
 	int32_t score_hint_converted;
+	/* widget event handlers that ran Halo PC's own functions, made to run
+	none, and 1 when the multiplayer pause menu was made the Xbox's resume
+	and quit */
+	int32_t widget_functions_cleared;
+	int32_t pause_menu_trimmed;
+	/* the Halo PC behaviours the map relies on (enum
+	custom_edition_behaviour, flags) */
+	uint32_t behaviours;
 	/* the tag of the problem, when there was one, else NONE (-1) */
 	int32_t problem_tag_index;
 };
@@ -346,17 +347,10 @@ enum cache_file_status cache_file_identify(
 	struct cache_file_identity *identity);
 
 /* The format of a cache header already in memory (CACHE_FILE_HEADER_BYTES
-bytes), from its signatures and version alone, and whether it carries an
-OpenSauce header: for callers that hold a header but not its file. */
+bytes), from its signatures and version alone: for callers that hold a
+header but not its file. */
 enum cache_file_format cache_file_header_format(
-	void const *header,
-	int *has_opensauce_header);
-
-/* The room for tag data a Custom Edition cache needs at
-CUSTOM_EDITION_TAG_CACHE_ADDRESS: 23 MB, or 1.5 times that with memory
-upgrades. */
-uint32_t custom_edition_tag_cache_bytes(
-	struct cache_file_identity const *identity);
+	void const *header);
 
 enum cache_file_status resource_map_open(
 	struct cache_file_source *source,
@@ -367,7 +361,7 @@ void resource_map_close(
 
 /* Loads a Custom Edition cache into `tag_cache`, which stands for the
 `tag_cache_bytes` bytes at CUSTOM_EDITION_TAG_CACHE_ADDRESS and must be at
-least custom_edition_tag_cache_bytes() long. The map's tag data is copied to
+least CUSTOM_EDITION_TAG_CACHE_BYTES long. The map's tag data is copied to
 the start, the tags kept in resource maps are placed after it with their
 addresses resolved, and every structure BSP, bitmap and sound sample range is
 checked. `resource_maps` is indexed by resource_map_type; entries may be NULL
@@ -387,14 +381,19 @@ their bytes need to change: every shader's type as this build numbers them,
 transparent chicago extended shaders made transparent chicago shaders,
 bitmaps and sound permutations in the state of ones not yet drawn or played
 and naming their own tags, sounds this build cannot decode made unplayable,
-animation overlays naming animations that do not exist made to name none,
-and OpenSauce's upgraded script node array made this build's size when its
-nodes fit. Returns the first problem: tags already converted stay
+animation overlays naming animations that do not exist made to name none;
+and what this build can of the Halo PC behaviours the map named `map_name`
+relies on. Returns the first problem: tags already converted stay
 converted. */
 enum cache_file_status custom_edition_cache_convert(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,
+	char const *map_name,
 	struct custom_edition_conversion_report *report);
+
+/* the name of a Halo PC behaviour, as Chimera's map list names it */
+char const *custom_edition_behaviour_name(
+	short behaviour);
 
 /* In a tag cache custom_edition_cache_load filled (`loaded_bytes` of it in
 use), the definition of the next tag of group `group_tag` after tag
@@ -442,6 +441,12 @@ void *custom_edition_cache_data_get(
 
 /* The path of tag `tag_index` of a tag cache custom_edition_cache_load
 filled, for messages. */
+/* Whether the tag of absolute index `tag_index` was read from a resource map
+(bitmaps.map and the like): Halo PC's own, as it shipped. */
+int custom_edition_cache_tag_in_resource_map(
+	uint8_t *tag_cache,
+	uint32_t loaded_bytes,
+	int32_t tag_index);
 char const *custom_edition_cache_tag_name(
 	uint8_t *tag_cache,
 	uint32_t loaded_bytes,

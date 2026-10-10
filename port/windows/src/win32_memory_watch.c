@@ -18,9 +18,9 @@ game's main thread is that often, which finds hangs without a debugger
 
 #include "port_config.h"
 
-/* the Xbox memory window (port/linux/src/platform.h) */
+/* the Xbox memory window (port/linux/src/platform.h: the desktop builds') */
 #define PLATFORM_CONTIGUOUS_BASE 0x80000000UL
-#define PLATFORM_CONTIGUOUS_SIZE 0x08000000UL
+#define PLATFORM_CONTIGUOUS_SIZE 0x20000000UL
 
 #define WATCH_PAGE_SIZE 0x1000UL
 #define WATCH_PAGE_COUNT (PLATFORM_CONTIGUOUS_SIZE / WATCH_PAGE_SIZE)
@@ -162,6 +162,11 @@ void memory_watch_forget(void *address, unsigned long size)
 		page_protected[page] = 0;
 		page_generation[page] = InterlockedIncrement(&current_generation);
 	}
+}
+
+/* page protection sees each write at once: nothing to do per frame */
+void memory_watch_begin_frame(void)
+{
 }
 
 /* ---------- stack reports (debug.sample_seconds) */

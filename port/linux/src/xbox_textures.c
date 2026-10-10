@@ -607,8 +607,8 @@ static void texture_dump(GLenum target, const struct xgpu_texture_description *d
 
 Halo PC keeps what some textures hold in other channels than the game reads
 it from (enum custom_edition_channel_order): a model shader's multipurpose
-masks, and a HUD meter's shape and fill order. The experimental Custom
-Edition map loading says which texels hold which order as they arrive
+masks, and a HUD meter's shape and fill order. The Custom Edition map
+loading says which texels hold which order as they arrive
 (port/linux/game/custom_edition_bitmaps.c), and textures made of them are
 sampled with each channel taken from where Halo PC keeps it, which leaves
 them as compressed as they were. Addresses stay listed until other texels
@@ -636,7 +636,7 @@ static struct custom_edition_texels *custom_edition_texels;
 static unsigned long custom_edition_texel_count;
 static unsigned long custom_edition_texel_capacity;
 
-/* the order of the texels at `address` */
+/* the order of the texels at address */
 static unsigned char custom_edition_texels_order(unsigned long address)
 {
 	unsigned long index;
@@ -655,11 +655,7 @@ void halo_custom_edition_texels_channels(const void *texels, unsigned char chann
 	unsigned long index;
 
 	if (channel_order >= NUMBER_OF_CUSTOM_EDITION_CHANNEL_ORDERS)
-	{
-		platform_log("the texels at %08lx have channel order %u, which there is none of: they are sampled as they are",
-			address, (unsigned)channel_order);
 		channel_order = _custom_edition_channels_xbox;
-	}
 	for (index = 0; index < custom_edition_texel_count && custom_edition_texels[index].address != address; index++)
 	{
 	}
@@ -758,8 +754,8 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	glBindTexture(target, texture);
 	xgpu_gl_state_invalidate();
 #ifndef CHANNELS_PLACED_IN_TEXELS
-	/* the channel of the texture each channel is sampled from, set on every
-	upload: a texture object can be reused for different texels */
+	/* the channel of the texels each channel is sampled from, set on every
+	upload: a texture object can be reused for other texels */
 	{
 		GLint channels[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
 
@@ -839,7 +835,6 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	texture_dump(target, description);
 }
 
-
 /* ---------- cache */
 
 struct texture_entry
@@ -906,8 +901,8 @@ static unsigned long palette_hash(const D3DCOLOR *palette)
 	return hash ? hash : 1;
 }
 
-/* an entry's GL texture and description: its high-res HUD texture's, if it has
-one, with the bitmap's own size (which its coordinates are in) */
+/* an entry's GL texture and description: its replacement's, if it has one,
+with the bitmap's own size (which its coordinates are in) */
 static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 	struct xgpu_texture_description *description)
 {
@@ -935,6 +930,17 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 			return art;
 		}
 	}
+	/* (a high-res texture drawn for some sprites, for the placeholder the
+	game draws them from: hud_hires.h) */
+	{
+		GLuint texture = hud_hires_placeholder_texture(entry->data, &description->levels);
+
+		if (texture)
+		{
+			description->hires = TRUE;
+			return texture;
+		}
+	}
 	if (entry->override >= 0)
 	{
 		GLuint texture = hud_hires_override_texture(entry->override, &description->levels);
@@ -943,6 +949,7 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 		{
 			description->hires = TRUE;
 			description->hires_coverage = hud_hires_override_coverage(entry->override);
+			description->hires_point_threshold = hud_hires_override_point_threshold(entry->override);
 			return texture;
 		}
 	}

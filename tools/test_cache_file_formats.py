@@ -1,4 +1,5 @@
-"""Tests for loading Custom Edition and OpenSauce caches (port/linux/game/cache_file_formats.c).
+"""Tests for loading Custom Edition caches, and refusing those that need
+OpenSauce (port/linux/game/cache_file_formats.c).
 
 The tests build complete but tiny Custom Edition caches and resource maps in
 memory, so no game data is needed or stored, and run the report tool
@@ -30,7 +31,6 @@ BASE = 0x40440000
 # a handle of the map a resource map was built with, which names nothing here
 STALE_HANDLE = 0xE1AB0037
 TAG_CACHE_BYTES = 0x01700000
-TAG_CACHE_BYTES_UPGRADED = 0x02280000
 HEADER_BYTES = 0x800
 NONE = 0xFFFFFFFF
 
@@ -320,9 +320,10 @@ def add_hud_placement(blob, placement, scale, flags):
     blob.u16(placement + 0x0C, flags)
 
 
-def add_weapon_hud(blob, placements):
+def add_weapon_hud(blob, placements, bitmap_index=None):
     """A weapon HUD interface with a static element for each of the first two
-    placements and a crosshair of one item for the third, each (scale, flags)."""
+    placements and a crosshair of one item for the third, each (scale, flags);
+    the first static and the crosshair draw the bitmap of tag bitmap_index."""
     hud = blob.reserve(0x17C)
     statics = blob.reserve(2 * 0xB4)
     crosshairs = blob.reserve(0x68)
@@ -333,6 +334,9 @@ def add_weapon_hud(blob, placements):
     add_hud_placement(blob, statics + 0x24, *placements[0])
     add_hud_placement(blob, statics + 0xB4 + 0x24, *placements[1])
     add_hud_placement(blob, items, *placements[2])
+    if bitmap_index is not None:
+        blob.u32(statics + 0x48 + 0x0C, bitmap_index)
+        blob.u32(crosshairs + 0x24 + 0x0C, bitmap_index)
     return hud
 
 
@@ -345,17 +349,6 @@ def add_animation_graph(blob, overlay_animation_index):
     blob.block(graph + 0x74, 1, animation)
     blob.u16(overlay, overlay_animation_index)
     return graph
-
-
-def add_script_nodes(blob, scenario, maximum, count):
-    """The scenario's script syntax data: a data array of `maximum` 20-byte
-    nodes, `count` of them in use."""
-    array = blob.reserve(0x38 + maximum * 20)
-    blob.put(array, b"script node\0")
-    blob.u16(array + 0x20, maximum)
-    blob.u16(array + 0x22, 20)
-    blob.u16(array + 0x2E, count)
-    blob.data(scenario + 0x474, 0x38 + maximum * 20, data_address=array)
 
 
 BSP_MATERIAL = {"vertex_count": 3, "lightmap_vertex_count": 3, "bitmap_index": 0, "vertex_type": 0,
@@ -399,26 +392,33 @@ class Map:
     Every option changes one thing from the valid default, and `where`
     records the file offsets of the fields tests corrupt afterwards."""
 
-    def __init__(self, opensauce=None, mod_name="", definitions=b"", trailing=b"",
+    def __init__(self, opensauce_flags=None, trailing=b"",
                  extra_tags=(), bsp_gap=None, bitmap_pixels_size=16, sound_samples_size=32,
                  font_style_reference=NONE, pitch_ranges=1, bsp_sizes=(0x1000,), sound_compression=1,
-                 model=None, bsp_material=None, shaders=(), animation_overlay=None, script_nodes=None,
-                 weapon_hud=None, strings_name="test\\strings", strings=("hello", "world!")):
+                 model=None, bsp_material=None, shaders=(), animation_overlay=None,
+                 weapon_hud=None, hud_bitmap_flags=None, in_map_bitmap=None, strings_name="test\\strings",
+                 strings=("hello", "world!"), name=b"test", tags_checksum=0):
         self.bsp_sizes = bsp_sizes
+        # the header's name and the tag data's checksum, by which Chimera's
+        # map list knows a map
+        self.name = name
+        self.tags_checksum = tags_checksum
         self.sound_compression = sound_compression
         # opt-in tags and content, so the defaults above keep their counts
         self.model = model
         self.bsp_material = bsp_material
         self.shaders = shaders
         self.animation_overlay = animation_overlay
-        self.script_nodes = script_nodes
         self.weapon_hud = weapon_hud
+        self.hud_bitmap_flags = hud_bitmap_flags
+        # (width, height, type, format, flags) of the bitmap kept in the map
+        self.in_map_bitmap = in_map_bitmap
         self.strings_name = strings_name
         self.strings = strings
         self.addresses = {}
-        self.opensauce = opensauce
-        self.mod_name = mod_name
-        self.definitions = definitions
+        # OpenSauce's header (its signature, version 1 and these flags) where a
+        # Custom Edition cache has padding, when not None
+        self.opensauce_flags = opensauce_flags
         self.trailing = trailing
         self.extra_tags = extra_tags
         self.bsp_gap = bsp_gap
@@ -427,10 +427,6 @@ class Map:
         self.font_style_reference = font_style_reference
         self.pitch_ranges = pitch_ranges
         self.where = {}
-
-    @property
-    def upgraded(self):
-        return bool(self.opensauce and self.opensauce.get("flags", 0) & 1)
 
     def resource_maps(self):
         # each map's first item sits right after its 16-byte header
@@ -486,9 +482,8 @@ class Map:
         model_offset = bsp_offset + sum(self.bsp_sizes)
         pixels_offset = model_offset + len(model_data)
         tag_data_offset = pixels_offset + len(in_map_pixels)
-        tag_cache_bytes = TAG_CACHE_BYTES_UPGRADED if self.upgraded else TAG_CACHE_BYTES
         if self.bsp_gap is None:
-            bsp_addresses = [BASE + tag_cache_bytes - size for size in self.bsp_sizes]
+            bsp_addresses = [BASE + TAG_CACHE_BYTES - size for size in self.bsp_sizes]
         else:
             bsp_addresses = [BASE + self.bsp_gap for _ in self.bsp_sizes]
 
@@ -497,6 +492,7 @@ class Map:
         instances = tag_data.reserve(len(tags) * 0x20)
         tag_data.u32(index + 0x00, instances)
         tag_data.u32(index + 0x04, salt << 16)
+        tag_data.u32(index + 0x08, self.tags_checksum)
         tag_data.u32(index + 0x0C, len(tags))
         tag_data.u32(index + 0x10, 3)
         tag_data.u32(index + 0x14, model_offset)
@@ -536,6 +532,14 @@ class Map:
         tag_data.block(group + 0x60, 1, bitmap)
         tag_data.u32(bitmap + 0x18, pixels_offset)
         tag_data.u32(bitmap + 0x1C, len(in_map_pixels))
+        if self.in_map_bitmap is not None:
+            width, height, kind, bitmap_format, flags = self.in_map_bitmap
+            tag_data.u16(bitmap + 0x04, width)
+            tag_data.u16(bitmap + 0x06, height)
+            tag_data.u16(bitmap + 0x0A, kind)
+            tag_data.u16(bitmap + 0x0C, bitmap_format)
+            tag_data.u16(bitmap + 0x0E, flags)
+        address_of["in map bitmap data"] = bitmap
         address_of["test\\in map bitmap"] = group
         # the header the map keeps of a sound held by sounds.map
         sound = tag_data.reserve(0xA4)
@@ -551,9 +555,11 @@ class Map:
         if self.animation_overlay is not None:
             address_of["test\\animations"] = add_animation_graph(tag_data, self.animation_overlay)
         if self.weapon_hud is not None:
-            address_of["test\\weapon hud"] = add_weapon_hud(tag_data, self.weapon_hud)
-        if self.script_nodes is not None:
-            add_script_nodes(tag_data, scenario, *self.script_nodes)
+            hud_bitmap_index = None
+            if self.hud_bitmap_flags is not None:
+                tag_data.u16(address_of["test\\in map bitmap"] + 6, self.hud_bitmap_flags)
+                hud_bitmap_index = [name for _, name, _ in tags].index("test\\in map bitmap")
+            address_of["test\\weapon hud"] = add_weapon_hud(tag_data, self.weapon_hud, hud_bitmap_index)
         for tag_index, (group_name, name, external) in enumerate(tags):
             if name in address_of:
                 tag_data.u32(instances + tag_index * 0x20 + 0x14, address_of[name])
@@ -564,17 +570,16 @@ class Map:
             data += structure_bsp_bytes(size, address, self.bsp_material if bsp_index == 0 else None)
         data += model_data + in_map_pixels + tag_data.bytes
         file_length = len(data)
-        definitions_offset = file_length
-        data += self.definitions + self.trailing
+        data += self.trailing
         header = data
         struct.pack_into("<IiIIII", header, 0, code("head"), 609, file_length, 0,
                          tag_data_offset, len(tag_data.bytes))
-        header[0x20:0x20 + 5] = b"test\0"
+        header[0x20:0x20 + len(self.name) + 1] = self.name + b"\0"
         header[0x40:0x40 + 14] = b"01.00.00.0609\0"
         struct.pack_into("<h", header, 0x60, 1)
         struct.pack_into("<I", header, 0x7FC, code("foot"))
-        if self.opensauce is not None:
-            self.write_opensauce(header, definitions_offset)
+        if self.opensauce_flags is not None:
+            struct.pack_into("<IhH", header, 0x70, code("yelo"), 1, self.opensauce_flags)
         checksum = zlib.crc32(bytes(data[bsp_offset:bsp_offset + sum(self.bsp_sizes)]))
         checksum = zlib.crc32(model_data, checksum)
         checksum = zlib.crc32(bytes(tag_data.bytes), checksum)
@@ -599,32 +604,13 @@ class Map:
         self.salt = salt
         return bytes(data)
 
-    def write_opensauce(self, header, definitions_offset):
-        options = self.opensauce
-        at = 0x70
-        struct.pack_into("<IhH", header, at, code("yelo"), options.get("version", 1), options.get("flags", 0))
-        header[at + 8] = options.get("project_yellow", 2)
-        header[at + 9] = options.get("project_yellow_globals", 2)
-        struct.pack_into("<f", header, at + 0x0C, options.get("amount", 1.5))
-        if self.definitions:
-            struct.pack_into("<III", header, at + 0x10, len(self.definitions), 0x100,
-                             options.get("definitions_offset", definitions_offset))
-        mod_name = self.mod_name.encode("latin-1")
-        header[at + 0x40:at + 0x40 + len(mod_name) + 1] = mod_name + b"\0"
-        build = b"000001.26.09.26.1200.ship\0"
-        header[at + 0x70:at + 0x70 + len(build)] = build
-
     def write(self, folder, name="test.map", resource_maps=True):
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / name
         path.write_bytes(self.build())
         if resource_maps:
             for type_name, data in self.resource_maps().items():
-                if self.mod_name and self.opensauce and self.opensauce.get("flags", 0) & 2:
-                    (folder / "data_files").mkdir(exist_ok=True)
-                    (folder / "data_files" / f"{self.mod_name}-{type_name}.map").write_bytes(data)
-                else:
-                    (folder / f"{type_name}.map").write_bytes(data)
+                (folder / f"{type_name}.map").write_bytes(data)
         return path
 
 
@@ -644,7 +630,6 @@ def test_minimal_custom_edition_cache_loads_with_every_resource(report_tool, tmp
     assert returncode == 0
     assert report["format"] == "Custom Edition cache"
     assert report["version"] == "609" and report["build"] == "01.00.00.0609" and report["name"] == "test"
-    assert report["opensauce_header"] == "no"
     assert report["load"] == "ok"
     assert report["tag_cache_bytes"] == hex(TAG_CACHE_BYTES)
     assert report["tags"] == "9" and report["scenario_tag"] == "0"
@@ -678,6 +663,28 @@ def test_several_pitch_ranges_are_relocated(report_tool, tmp_path):
     assert report["sound_sample_ranges_checked"] == "3"
 
 
+def test_a_protected_scenario_is_given_the_scenario_group(report_tool, tmp_path):
+    """Map protection renames the scenario tag's group (to 'prot', say). Halo PC
+    used the tag the header names regardless, so the loader gives it the
+    scenario's group and loads the map."""
+    cache = Map()
+    path = cache.write(tmp_path)
+    instance_case(0, 0x00, "<I", code("prot"))(cache, path)
+    returncode, report = report_one(report_tool, path)
+    assert returncode == 0
+    assert report["load"] == "ok"
+    assert report["scenario_regrouped"] == "1"
+
+
+def test_a_structure_bsp_instance_with_its_load_address_loads(report_tool, tmp_path):
+    """Invader writes the address a structure BSP loads at in its tag
+    instance (cursed-damnation); it has none until it is loaded."""
+    cache = Map()
+    path = instance_case(1, 0x14, "<I", BASE + 0x1500000)(cache, cache.write(tmp_path))
+    returncode, report = report_one(report_tool, path)
+    assert returncode == 0 and report["load"] == "ok"
+
+
 def test_several_structure_bsps_share_the_top_of_the_tag_cache(report_tool, tmp_path):
     """Each BSP is loaded alone at the top of the tag cache; the largest sets
     how much room is left for the tags, and the checksum covers them all,
@@ -704,39 +711,6 @@ def test_resource_maps_are_recognized_by_type(report_tool, tmp_path):
     assert [b["resource_items"] for b in blocks] == ["2", "2", "3"]
 
 
-def test_opensauce_cache_with_memory_upgrades_uses_the_larger_tag_cache(report_tool, tmp_path):
-    path = Map(opensauce={"flags": 1}).write(tmp_path, "test.yelo")
-    returncode, report = report_one(report_tool, path)
-    assert returncode == 0
-    assert report["opensauce_header"] == "yes"
-    assert report["opensauce_flags"] == "memory upgrades"
-    assert report["tag_cache_bytes"] == hex(TAG_CACHE_BYTES_UPGRADED)
-    assert report["lowest_structure_bsp_address"] == hex(BASE + TAG_CACHE_BYTES_UPGRADED - 0x1000)
-    assert report["load"] == "ok"
-
-
-def test_opensauce_structure_bsp_beyond_the_stock_tag_cache_needs_the_upgrade_flag(report_tool, tmp_path):
-    """A BSP placed at the top of the upgraded tag cache is out of range for a
-    cache that does not declare memory upgrades."""
-    upgraded = Map(opensauce={"flags": 1})
-    path = upgraded.write(tmp_path, "test.yelo")
-    data = bytearray(path.read_bytes())
-    struct.pack_into("<H", data, 0x70 + 6, 0)
-    path.write_bytes(data)
-    _, report = report_one(report_tool, path)
-    assert report["load"] == "a structure BSP does not fit in the file or in the tag cache"
-
-
-def test_opensauce_definitions_are_accepted_after_the_cache_data(report_tool, tmp_path):
-    definitions = zlib.compress(b"CheApe definitions" * 8)
-    path = Map(opensauce={"flags": 1}, definitions=definitions).write(tmp_path, "test.yelo")
-    returncode, report = report_one(report_tool, path)
-    assert returncode == 0
-    assert report["opensauce_definitions"].startswith(hex(path.stat().st_size - len(definitions)))
-    assert report["trailing_bytes"] == "0x0"
-    assert report["warnings"] == "none"
-
-
 def test_trailing_data_is_reported_not_rejected(report_tool, tmp_path):
     path = Map(trailing=b"\xAA" * 100).write(tmp_path)
     returncode, report = report_one(report_tool, path)
@@ -753,39 +727,31 @@ def test_checksum_mismatch_is_reported_not_rejected(report_tool, tmp_path):
     assert report["warnings"] == "checksum mismatch"
 
 
-def test_opensauce_tags_are_reported(report_tool, tmp_path):
-    path = Map(opensauce={"flags": 1}, extra_tags=[("yelo", "test\\project yellow", False),
-                                                   ("gelo", "test\\project yellow globals", False)]).write(tmp_path)
+OPENSAUCE_REFUSED = ("an OpenSauce map that needs OpenSauce (its header asks for memory upgrades, mod data files or "
+                     "the like), which this build does not run")
+
+
+@pytest.mark.parametrize("flags", [1, 2, 4, 1 << 15])
+def test_caches_that_need_opensauce_are_refused(report_tool, tmp_path, flags):
+    """A cache whose OpenSauce header asks for anything of OpenSauce's
+    (memory upgrades, mod data files, any flag) is refused as it is
+    identified."""
+    path = Map(opensauce_flags=flags).write(tmp_path)
     returncode, report = report_one(report_tool, path)
-    assert returncode == 0
-    assert report["warnings"] == "OpenSauce tags"
-
-
-def test_mod_data_files_are_required_when_the_cache_names_them(report_tool, tmp_path):
-    cache = Map(opensauce={"flags": 3}, mod_name="testmod")
-    path = cache.write(tmp_path / "with_mod", "test.yelo")
-    returncode, report = report_one(report_tool, path)
-    assert returncode == 0
-    assert report["opensauce_flags"] == "memory upgrades, mod data files"
-    assert report["opensauce_mod_name"] == "testmod"
-    assert report["resource_map.bitmaps"].replace("\\", "/").endswith("data_files/testmod-bitmaps.map (ok)")
-
-    # the stock files alone are not enough
-    stock_only = tmp_path / "stock_only"
-    Map().write(stock_only)
-    missing = stock_only / "test.yelo"
-    missing.write_bytes(path.read_bytes())
-    returncode, report = report_one(report_tool, missing)
     assert returncode == 1
-    assert report["resource_map.bitmaps"].endswith("(not found)")
-    assert report["load"] == "a map needs a resource map that was not supplied"
-    assert report["milestone.load"] == "no"
+    assert report["identify"] == OPENSAUCE_REFUSED
+    assert "load" not in report
 
-    # unless the substitution is asked for, and then it is reported
-    returncode, report = report_one(report_tool, missing, "--stock-data-files")
+
+def test_caches_that_only_carry_opensauce_data_load(report_tool, tmp_path):
+    """A cache with OpenSauce's header asking for nothing, and its
+    project_yellow and project_yellow_globals tags, runs as stock Custom
+    Edition runs it: neither is read (SPV3's backwards-compatible a50.map)."""
+    path = Map(opensauce_flags=0, extra_tags=[("yelo", "test\\project yellow", False),
+                                              ("gelo", "test\\project yellow globals", False)]).write(tmp_path)
+    returncode, report = report_one(report_tool, path)
     assert returncode == 0
-    assert report["resource_maps_substituted"] == "stock files instead of mod set 'testmod'"
-    assert report["load"] == "ok"
+    assert report["identify"] == "ok" and report["load"] == "ok"
 
 
 def test_resource_maps_are_found_in_the_maps_directory_option(report_tool, tmp_path):
@@ -922,13 +888,28 @@ def test_chicago_extended_shaders_become_chicago_shaders(report_tool, tmp_path):
         assert tags[shader - BASE + 0x64:shader - BASE + 0x6C] == bytes(8)
 
 
-def test_a_shader_with_another_groups_type_is_rejected(report_tool, tmp_path):
+def test_a_shader_with_another_groups_type_is_given_its_groups(report_tool, tmp_path):
     cache = Map(shaders=[("swat", {"type": 7})])
-    returncode, report, _ = converted(report_tool, cache, tmp_path)
-    assert returncode == 1
-    assert report["load"] == "ok"
-    assert report["convert"] == "a shader's type is not the one Custom Edition gives its group"
-    assert report["convert_problem_tag"] == str(cache.tag_indices["test\\shader 0"])
+    returncode, report, tags = converted(report_tool, cache, tmp_path)
+    assert returncode == 0
+    assert report["shaders_mistyped"] == "1"
+    shader = cache.addresses["test\\shader 0"]
+    assert u16_at(tags, shader + 0x24) == SHADER_TYPES["swat"][1]
+
+
+@pytest.mark.parametrize("bitmap, made_linear, flags", [
+    ((3840, 64, 0, 11, 0x81), 1, 0x90),  # birdcage's needler plasma: linear, no longer "power of two"
+    ((256, 64, 0, 11, 0x01), 0, 0x01),   # powers of two: swizzled as before
+    ((96, 96, 0, 14, 0x03), 0, 0x03),    # DXT1: linear ones cannot be compressed, so it stays
+    ((96, 96, 0, 17, 0x04), 0, 0x04),    # P8: nor palettized
+    ((96, 96, 2, 11, 0x00), 0, 0x00),    # a cube map: only 2D bitmaps can be linear
+    ((100, 50, 0, 11, 0x10), 0, 0x10),   # linear already
+], ids=["npot", "power of two", "dxt1", "p8", "cube map", "linear"])
+def test_bitmaps_of_sides_only_halo_pc_draws_are_made_linear(report_tool, tmp_path, bitmap, made_linear, flags):
+    cache = Map(in_map_bitmap=bitmap)
+    returncode, report, tags = converted(report_tool, cache, tmp_path)
+    assert returncode == 0 and report["bitmaps_made_linear"] == str(made_linear)
+    assert u16_at(tags, cache.addresses["in map bitmap data"] + 0x0E) == flags
 
 
 def test_bitmaps_name_their_own_tag(report_tool, tmp_path):
@@ -975,28 +956,6 @@ def test_sounds_this_build_cannot_decode_are_made_unplayable(report_tool, tmp_pa
     assert u32_at(tags, cache.addresses["test\\sound"] + 0x98) == 0
 
 
-def test_opensauce_script_nodes_are_made_this_builds_number(report_tool, tmp_path):
-    cache = Map(script_nodes=(28501, 600))
-    returncode, report, tags = converted(report_tool, cache, tmp_path)
-    assert returncode == 0 and report["script_nodes_reduced"] == "1"
-    syntax_data = cache.addresses["test\\scenario"] + 0x474
-    assert u32_at(tags, syntax_data) == 0x38 + 19001 * 20
-    assert s16_at(tags, u32_at(tags, syntax_data + 0x0C) + 0x20) == 19001
-
-
-def test_stock_script_nodes_are_left_alone(report_tool, tmp_path):
-    _, report, _ = converted(report_tool, Map(script_nodes=(19001, 600)), tmp_path)
-    assert report["convert"] == "ok" and report["script_nodes_reduced"] == "0"
-
-
-def test_scripts_needing_more_nodes_than_this_build_has_are_rejected(report_tool, tmp_path):
-    cache = Map(script_nodes=(28501, 19002))
-    returncode, report, _ = converted(report_tool, cache, tmp_path)
-    assert returncode == 1
-    assert report["convert"].startswith("the scenario's scripts use more syntax nodes")
-    assert report["convert_problem_tag"] == "0"
-
-
 def test_animation_overlays_naming_missing_animations_are_disabled(report_tool, tmp_path):
     cache = Map(animation_overlay=1)  # the graph has one animation
     returncode, report, tags = converted(report_tool, cache, tmp_path)
@@ -1018,15 +977,17 @@ def f32_at(tags, address):
 
 def test_hud_elements_with_the_high_resolution_scale_are_halved(report_tool, tmp_path):
     """Halo PC draws them from bitmaps at twice the Xbox's size; this build
-    ignores the flag, so the scale takes it in and the flag goes."""
+    ignores the flag, so the scale takes it in and the flag goes. Halo PC
+    reads it only on statics, meters and numbers: a crosshair's item keeps
+    its scale and flag."""
     cache = Map(weapon_hud=[((1.0, 0.5), 4 | 1), ((1.0, 1.0), 1), ((2.0, 2.0), 4)])
     returncode, report, tags = converted(report_tool, cache, tmp_path)
-    assert returncode == 0 and report["hud_placements_rescaled"] == "2"
+    assert returncode == 0 and report["hud_placements_rescaled"] == "1"
     hud = cache.addresses["test\\weapon hud"]
     statics = u32_at(tags, hud + 0x64)
     items = u32_at(tags, u32_at(tags, hud + 0x88) + 0x38)
     assert (f32_at(tags, statics + 0x28), f32_at(tags, statics + 0x2C), u16_at(tags, statics + 0x30)) == (0.5, 0.25, 1)
-    assert (f32_at(tags, items + 4), f32_at(tags, items + 8), u16_at(tags, items + 0x0C)) == (1.0, 1.0, 0)
+    assert (f32_at(tags, items + 4), f32_at(tags, items + 8), u16_at(tags, items + 0x0C)) == (2.0, 2.0, 4)
 
 
 def test_hud_elements_without_the_high_resolution_scale_keep_theirs(report_tool, tmp_path):
@@ -1035,6 +996,41 @@ def test_hud_elements_without_the_high_resolution_scale_keep_theirs(report_tool,
     assert returncode == 0 and report["hud_placements_rescaled"] == "0"
     statics = u32_at(tags, cache.addresses["test\\weapon hud"] + 0x64)
     assert (f32_at(tags, statics + 0xB4 + 0x28), u16_at(tags, statics + 0xB4 + 0x30)) == (0.75, 3)
+
+
+@pytest.mark.parametrize("flag", [1 << 4, 1 << 7], ids=["half hud scale", "force hud use highres scale"])
+def test_hud_elements_drawing_a_halo_pc_half_scale_bitmap_are_halved(report_tool, tmp_path, flag):
+    """Halo PC's bitmap flags halve the scale of every HUD element drawing the
+    bitmap, as the element's own high resolution scale does: the first static
+    and the crosshair's item draw it, the second static does not."""
+    cache = Map(weapon_hud=[((1.0, 0.5), 1), ((1.0, 1.0), 1), ((2.0, 2.0), 0)], hud_bitmap_flags=flag)
+    returncode, report, tags = converted(report_tool, cache, tmp_path)
+    assert returncode == 0 and report["hud_placements_rescaled"] == "2"
+    hud = cache.addresses["test\\weapon hud"]
+    statics = u32_at(tags, hud + 0x64)
+    items = u32_at(tags, u32_at(tags, hud + 0x88) + 0x38)
+    assert (f32_at(tags, statics + 0x28), f32_at(tags, statics + 0x2C), u16_at(tags, statics + 0x30)) == (0.5, 0.25, 1)
+    assert (f32_at(tags, statics + 0xB4 + 0x28), u16_at(tags, statics + 0xB4 + 0x30)) == (1.0, 1)
+    assert (f32_at(tags, items + 4), f32_at(tags, items + 8)) == (1.0, 1.0)
+
+
+@pytest.mark.parametrize("name, tags_checksum, listed", [
+    (b"rev_snowcast_cavebeta", 1683840640, True),
+    (b"Rev_Snowcast_CaveBeta", 1683840640, True),
+    (b"rev_snowcast_cavebeta", 1683840641, False),
+], ids=["listed", "name in another case", "another checksum"])
+def test_maps_chimera_lists_get_halo_pc_behaviours(report_tool, tmp_path, name, tags_checksum, listed):
+    """Chimera's map list knows a map by its name in lower case and its tag
+    data checksum. This one relies on, among others, bitmaps' half HUD scale
+    flags being ignored, so the static drawing a bitmap with one keeps its
+    scale."""
+    cache = Map(weapon_hud=[((1.0, 0.5), 1), ((1.0, 1.0), 1), ((2.0, 2.0), 0)], hud_bitmap_flags=1 << 4,
+                name=name, tags_checksum=tags_checksum)
+    returncode, report, tags = converted(report_tool, cache, tmp_path)
+    assert returncode == 0
+    assert report["halo_pc_behaviours"] == (
+        "gearbox_chicago_multiply gearbox_meters hud_number_scale disable_bitmap_hud_scale_flags" if listed else "none")
+    assert report["hud_placements_rescaled"] == ("0" if listed else "2")
 
 
 SCORE_HINT = 'Hold "%s" for score'
@@ -1178,8 +1174,6 @@ MALFORMED_CACHES = {
                        "the scenario tag is missing, misplaced or not a scenario"),
     "scenario salt": (tag_data_case("index", 0x04, "<I", 0x12340000), "load",
                       "the scenario tag is missing, misplaced or not a scenario"),
-    "scenario group": (instance_case(0, 0x00, "<I", code("weap")), "load",
-                       "the scenario tag is missing, misplaced or not a scenario"),
     "external scenario": (instance_case(0, 0x18, "<I", 1), "load",
                           "a tag of a group that resource maps never hold is marked as held by one"),
     "bsp count": (tag_data_case("scenario", 0x5A4, "<i", 33), "load",
@@ -1188,8 +1182,6 @@ MALFORMED_CACHES = {
                           "the scenario's structure BSP block is not valid"),
     "bsp reference to a weapon": (tag_data_case("reference", 0x1C, "<I", (0xE174 + 8) << 16 | 8), "load",
                                   "the scenario's structure BSP block is not valid"),
-    "bsp tag already loaded": (instance_case(1, 0x14, "<I", BASE + 0x28), "load",
-                               "the scenario's structure BSP block is not valid"),
     "bsp beyond file": (tag_data_case("reference", 0x04, "<i", 0x7FFFFF00), "load",
                         "a structure BSP does not fit in the file or in the tag cache"),
     "bsp in header": (tag_data_case("reference", 0x00, "<i", 0x10), "load",
@@ -1234,40 +1226,12 @@ def test_malformed_caches_are_rejected_with_the_specific_reason(report_tool, tmp
         assert report["milestone.load"] == "no"
 
 
-MALFORMED_OPENSAUCE = {
-    "header version": ({"flags": 1, "version": 3}, "the OpenSauce header is not valid (version, tag versions or memory upgrade)"),
-    "project_yellow version": ({"flags": 1, "project_yellow": 1}, "the OpenSauce header is not valid (version, tag versions or memory upgrade)"),
-    "project_yellow_globals version": ({"flags": 1, "project_yellow_globals": 3}, "the OpenSauce header is not valid (version, tag versions or memory upgrade)"),
-    "memory upgrade amount": ({"flags": 1, "amount": 2.0}, "the OpenSauce header is not valid (version, tag versions or memory upgrade)"),
-    "negative memory upgrade": ({"flags": 1, "amount": -1.0}, "the OpenSauce header is not valid (version, tag versions or memory upgrade)"),
-    "nan memory upgrade": ({"flags": 1, "amount": float("nan")}, "the OpenSauce header is not valid (version, tag versions or memory upgrade)"),
-    "undefined flag": ({"flags": 1 | 1 << 5}, "the OpenSauce header sets flags OpenSauce does not define"),
-    "mod data files without a name": ({"flags": 2}, "the OpenSauce header is not valid (version, tag versions or memory upgrade)"),
-}
-
-
-@pytest.mark.parametrize("case", sorted(MALFORMED_OPENSAUCE))
-def test_malformed_opensauce_headers_are_rejected(report_tool, tmp_path, case):
-    options, message = MALFORMED_OPENSAUCE[case]
-    path = Map(opensauce=options).write(tmp_path, "test.yelo")
-    returncode, report = report_one(report_tool, path)
-    assert returncode == 1
-    assert report["identify"] == message
-
-
-def test_opensauce_definitions_outside_the_file_are_rejected(report_tool, tmp_path):
-    path = Map(opensauce={"flags": 1, "definitions_offset": 0x10}, definitions=b"x" * 64).write(tmp_path, "test.yelo")
-    _, report = report_one(report_tool, path)
-    assert report["identify"] == "the OpenSauce tag definitions lie outside the file"
-    path = Map(opensauce={"flags": 1, "definitions_offset": 0x7FFFFFF0}, definitions=b"x" * 64).write(tmp_path, "test.yelo")
-    _, report = report_one(report_tool, path)
-    assert report["identify"] == "the OpenSauce tag definitions lie outside the file"
-
-
-def test_unterminated_opensauce_strings_are_rejected(report_tool, tmp_path):
-    path = Map(opensauce={"flags": 1}).write(tmp_path, "test.yelo")
-    _, report = report_one(report_tool, patched(path, 0x70 + 0x40, "32s", b"m" * 32))
-    assert report["identify"] == "a name or build string in the header is not terminated"
+def test_a_file_length_of_zero_is_the_whole_file(report_tool, tmp_path):
+    """Invader leaves the header's file length 0 (blood_covenantv3)."""
+    path = Map().write(tmp_path, "test.map")
+    returncode, report = report_one(report_tool, patched(path, 0x08, "<I", 0))
+    assert returncode == 0 and report["identify"] == "ok" and report["load"] == "ok"
+    assert report["file_length"] == hex(path.stat().st_size)
 
 
 def test_too_small_files_are_rejected(report_tool, tmp_path):
@@ -1384,7 +1348,7 @@ def test_seeded_corruption_never_crashes_the_loader(report_tool, tmp_path):
     """Sampled robustness, not proof: flip bytes in the header, tag index,
     tag data and resource maps of a valid cache and require a clean verdict
     (exit 0 or 1, checked by run_report) every time."""
-    cache = Map(opensauce={"flags": 1})
+    cache = Map()
     pristine = cache.build()
     resource_maps = cache.resource_maps()
     generator = random.Random(20260926)
@@ -1403,10 +1367,10 @@ def test_seeded_corruption_never_crashes_the_loader(report_tool, tmp_path):
             else:
                 offset = generator.randrange(len(target))
             target[offset] = generator.randrange(256)
-        (folder / "test.yelo").write_bytes(targets["map"])
+        (folder / "test.map").write_bytes(targets["map"])
         for type_name in resource_maps:
             (folder / f"{type_name}.map").write_bytes(targets[type_name])
-        run_report(report_tool, folder / "test.yelo")
+        run_report(report_tool, folder / "test.map")
 
 
 # ---------- real maps, when present (never committed)
@@ -1452,48 +1416,31 @@ def test_real_maps_resource_maps_are_valid(report_tool, real_maps):
     assert [b["resource_map"] for b in blocks] == ["ok", "ok", "ok"]
 
 
-def test_real_maps_every_opensauce_cache_is_recognized_and_explained(report_tool, real_maps):
-    """Each OpenSauce cache either loads or names what it lacks; the ones in
-    the documented sample behave as recorded."""
-    paths = sorted(real_maps.glob("*.yelo")) + [
-        path for path in sorted(real_maps.glob("*.map"))
-        if path.stem not in STOCK_CUSTOM_EDITION_MAPS and path.stem not in ("bitmaps", "sounds", "loc")]
+def test_real_maps_opensauce_caches_are_recognized(report_tool, real_maps):
+    """Each .yelo map present is either refused for needing OpenSauce or
+    identified as a Custom Edition cache (a .yelo that asks for nothing of
+    OpenSauce's; the game never looks for .yelo files)."""
+    paths = sorted(real_maps.glob("*.yelo"))
     if not paths:
         pytest.skip("no OpenSauce caches present")
     _, blocks = run_report(report_tool, *paths)
-    recorded = {
-        "beavercreek_halo3.yelo": ("ok", "OpenSauce tags"),
-        "celer_exile_odst_v2.yelo": ("ok", "checksum mismatch, trailing data, OpenSauce tags"),
-        "fy_killzone.yelo": ("a map needs a resource map that was not supplied", "OpenSauce tags"),
-        "extinctionrevanepic2.map": ("a map needs a resource map that was not supplied", "OpenSauce tags"),
-    }
     for block in blocks:
-        name = Path(block["file"]).name
-        assert block["identify"] == "ok", name
-        assert block["format"] == "Custom Edition cache", name
-        assert block["milestone.run"].startswith("not observed by this tool"), name
-        if name in recorded:
-            assert (block["load"], block["warnings"]) == recorded[name], name
+        assert block["identify"] in (OPENSAUCE_REFUSED, "ok"), block["file"]
 
 
 def test_real_maps_convert_as_recorded(report_tool, real_maps):
-    """The two maps run in the native build (docs/custom_edition_caches.md)
-    convert as recorded there."""
+    """The map run in the native build (docs/custom_edition_caches.md)
+    converts as recorded there."""
     recorded = {
         "bloodgulch.map": {"structure_bsp_materials_checked": "79", "shaders_renumbered": "21",
                            "chicago_extended_shaders_converted": "10", "bitmaps_prepared": "676",
-                           "script_nodes_reduced": "0", "animation_overlays_disabled": "0",
+                           "animation_overlays_disabled": "0",
                            "sounds_undecodable": "39", "hud_placements_rescaled": "32",
                            "score_hint_converted": "1"},
-        "beavercreek_halo3.yelo": {"structure_bsp_materials_checked": "67", "shaders_renumbered": "14",
-                                   "chicago_extended_shaders_converted": "4", "bitmaps_prepared": "1005",
-                                   "script_nodes_reduced": "1", "animation_overlays_disabled": "2",
-                                   "sounds_undecodable": "10", "hud_placements_rescaled": "14",
-                                   "score_hint_converted": "1"},
     }
     present = [real_maps / name for name in recorded if (real_maps / name).is_file()]
     if not present:
-        pytest.skip("neither recorded map is present")
+        pytest.skip("the recorded map is not present")
     returncode, blocks = run_report(report_tool, *present)
     assert returncode == 0
     for block in blocks:

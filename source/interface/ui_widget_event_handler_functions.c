@@ -927,9 +927,9 @@ symbols in this file:
 #include "saved games/game_state.h"
 #include "saved games/player_profile.h"
 #include "interface/ui_widget_definitions.h"
+#include "custom_edition_maps.h" /* port: port/linux/game/custom_edition_maps.c */
 #include "saved games/saved_game_files.h"
 #include "text/unicode.h"
-#include "custom_edition_maps.h"
 #include "halo_menus.h" /* port: PC_MENU_FUNCTION_BASE */
 
 /* ---------- constants */
@@ -2997,12 +2997,7 @@ static boolean multiplayer_level_list_initialize(
 	char map_name[256];
 	struct ui_widget_definition *definition = ui_widget_definition_get(widget->definition_tag_index);
 	short level_count = 13;
-	/* the Xbox levels, then the Custom Edition maps in the maps folder
-	(port/linux/game/custom_edition_maps.c) */
-	char **levels = custom_edition_maps_level_list(
-		event_handler_functions.multiplayer_levels,
-		level_count,
-		&level_count);
+	char **levels;
 
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1228,
 		definition->type == 2,
@@ -3010,14 +3005,19 @@ static boolean multiplayer_level_list_initialize(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1229,
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer level list' widget");
+	/* port: the Xbox levels, then the Custom Edition maps in the maps
+	folders, looked for again as the list opens
+	(port/linux/game/custom_edition_maps.c) */
+	custom_edition_maps_look_again();
+	levels = custom_edition_maps_level_list(event_handler_functions.multiplayer_levels, level_count,
+		&level_count);
 	widget->generated_list = levels;
 	widget->generated_count = level_count;
 	if (saved_game_file_retrieve_last_used_multiplayer_map(map_name))
 	{
 		widget->data3C.selected_index = 0;
 		while (widget->data3C.selected_index < level_count &&
-			_stricmp(map_name,
-				levels[widget->data3C.selected_index]))
+			_stricmp(map_name, levels[widget->data3C.selected_index]))
 		{
 			widget->data3C.selected_index++;
 		}
@@ -3386,6 +3386,57 @@ static boolean multiplayer_profiles_list_initialize(
 	return TRUE;
 }
 
+/* port: whether a widget of a map's may not run an event handler's function.
+A widget's handlers name the functions they run by their index in the
+function table, which nothing checks, so a game map's widget could run the
+main menu's functions (deleting player and playlist profiles, saving them,
+running the demos) and the port's own (writing config.toml, quitting,
+connecting), on its created event too, as its screen opens. The shipped
+game maps' widgets (their pause screens) run none of these: the port's own
+menus' tags (pc_menu_tag) may run the port's, and the main menu (ui.map)
+the main menu's. Logged once */
+static boolean ui_widget_function_denied(
+	struct widget_instance *widget,
+	word function_index)
+{
+	extern boolean pc_menu_tag(long tag_index);
+	static short const main_menu_functions[] =
+	{
+		41, /* mp profile change name */
+		60, /* mp profile save changes */
+		64, 65, 66, 67, /* player profile begin and end editing, change name, save changes */
+		68, 69, 70, 71, /* player profile controller settings */
+		74, 75, 76, 77, 78, 79, 80, /* profile deletion and creation */
+		86, 87, /* the demos */
+	};
+	static boolean logged = FALSE;
+	boolean denied = FALSE;
+	short index;
+
+	if (pc_menu_tag(widget->definition_tag_index))
+		return FALSE;
+	if (function_index >= PC_MENU_FUNCTION_BASE && function_index < 0x8000)
+	{
+		denied = TRUE;
+	}
+	else if (!main_menu_is_active())
+	{
+		for (index = 0; index < (short)NUMBEROF(main_menu_functions); index++)
+		{
+			if (function_index == (word)main_menu_functions[index])
+				denied = TRUE;
+		}
+	}
+	if (denied && !logged)
+	{
+		logged = TRUE;
+		error(_error_silent, "a map's widget may not run event handler function %d; it is skipped",
+			function_index);
+	}
+
+	return denied;
+}
+
 boolean ui_widget_event_handler_function_invoke(
 	struct widget_instance *widget,
 	struct event_record *event,
@@ -3397,6 +3448,12 @@ boolean ui_widget_event_handler_function_invoke(
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 478,
 		widget != NULL && widget_deleted != NULL,
 		"(widget != NULL) && (widget_deleted != NULL)");
+	/* port: a map's own widgets (not the menus' tags the port adds) may not
+	run what changes the player's files or settings: ui_widget_function_denied
+	(failed, as an invalid function is, so the handler opens and closes no
+	screens after it) */
+	if (ui_widget_function_denied(widget, function_index))
+		return FALSE;
 	/* port: the menus' own functions (port/linux/game/menu_functions.c) */
 	if (function_index >= PC_MENU_FUNCTION_BASE && function_index < 0x8000)
 	{
@@ -5637,7 +5694,6 @@ static boolean multiplayer_level_select(
 	struct widget_instance *level_list;
 	struct ui_widget_definition *definition;
 	long level_index;
-	char **levels;
 
 	definition = ui_widget_definition_get(widget->definition_tag_index);
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1280,
@@ -5657,13 +5713,17 @@ static boolean multiplayer_level_select(
 		definition->child_count == 3,
 		"expected 3 list items for 'multiplayer level list' widget");
 	level_list = widget->child->child;
-	/* the levels the list offers: the Xbox levels, then the Custom Edition
-	maps (multiplayer_level_list_initialize) */
-	levels = level_list->generated_list;
+	/* port: the levels the list offers, the Xbox levels then the Custom
+	Edition maps (multiplayer_level_list_initialize) */
 	match_vassert("c:\\halo\\SOURCE\\interface\\ui_widget_event_handler_functions.c", 1298,
 		level_list->data3C.selected_index >= 0 && level_list->data3C.selected_index < level_list->generated_count,
 		"invalid multiplayer level specified from 'multiplayer level list' list widget");
-	map_name = levels[level_list->data3C.selected_index];
+	if (level_list->data3C.selected_index < 0 || level_list->data3C.selected_index >= level_list->generated_count ||
+		!level_list->generated_list)
+	{
+		return FALSE;
+	}
+	map_name = ((char **)level_list->generated_list)[level_list->data3C.selected_index];
 	file = fopen("d:\\map_automation.txt", "r");
 	if (file)
 	{
@@ -5694,9 +5754,9 @@ static boolean multiplayer_level_select(
 	}
 	for (level_index = 0; level_index < level_list->generated_count; level_index++)
 	{
-		if (!_stricmp(map_name, levels[level_index]))
+		if (!_stricmp(map_name, ((char **)level_list->generated_list)[level_index]))
 		{
-			saved_game_file_remember_last_used_multiplayer_map(levels[level_index]);
+			saved_game_file_remember_last_used_multiplayer_map(((char **)level_list->generated_list)[level_index]);
 			break;
 		}
 	}
@@ -5892,23 +5952,23 @@ static boolean solo_level_initialize_list_single_player(
 /* port: the PC version's multiplayer menus (port/linux/game/menu_functions.c),
 on our lists rather than the Xbox's spinners: */
 
-/* the multiplayer maps (the Xbox's 13, then the Custom Edition maps in the
-maps folder as multiplayer_level_list_initialize offers them, not looked for
-again here: port/linux/game/custom_edition_maps.c), and the one used last
-(else 0) */
+/* the multiplayer maps (the Xbox's 13), and the one used last (else 0),
+unless last_used is NULL: it is read from a file of the save root, which the
+menus that name maps each frame need not do */
 short ui_widget_port_multiplayer_maps(
 	char const *const **names,
 	short *last_used)
 {
 	char map_name[256];
-	short level_count = 13;
+	short level_count;
 	short level_index;
-	char **levels = custom_edition_maps_latest_level_list(
-		event_handler_functions.multiplayer_levels,
-		level_count,
-		&level_count);
+	/* (the Xbox levels, then the Custom Edition maps:
+	port/linux/game/custom_edition_maps.c) */
+	char **levels = custom_edition_maps_level_list(event_handler_functions.multiplayer_levels, 13, &level_count);
 
 	*names = (char const *const *)levels;
+	if (!last_used)
+		return level_count;
 	*last_used = 0;
 	if (saved_game_file_retrieve_last_used_multiplayer_map(map_name))
 	{
@@ -5928,12 +5988,9 @@ boolean ui_widget_port_multiplayer_map_choose(
 {
 	char const *map_name;
 	void *server = global_network_game_server_get();
-	short level_count = 13;
-	/* (the levels ui_widget_port_multiplayer_maps gave) */
-	char **levels = custom_edition_maps_latest_level_list(
-		event_handler_functions.multiplayer_levels,
-		level_count,
-		&level_count);
+	char const *const *levels;
+	short last_used;
+	short level_count = ui_widget_port_multiplayer_maps(&levels, &last_used);
 
 	if (level_index < 0 || level_index >= level_count)
 		return FALSE;
@@ -5952,7 +6009,7 @@ boolean ui_widget_port_multiplayer_map_choose(
 	game_engine_override_map_name(map_name);
 	if (server)
 		network_game_server_change_map_name(server, map_name);
-	saved_game_file_remember_last_used_multiplayer_map(levels[level_index]);
+	saved_game_file_remember_last_used_multiplayer_map(map_name);
 	return TRUE;
 }
 
@@ -5993,7 +6050,9 @@ boolean ui_widget_port_cooperative_level_choose(
 	struct network_game_server *server = global_network_game_server_get();
 	struct game_variant variant;
 
-	if (!server || !map_name || main_get_solo_level_from_name(map_name) == NONE)
+	/* (a campaign level, or a Custom Edition campaign map's:
+	port/linux/game/custom_edition_maps.c) */
+	if (!server || !map_name || !custom_edition_maps_level_campaign(map_name))
 		return FALSE;
 	csmemset(&variant, 0, sizeof(variant));
 	ustrncpy(variant.human_readable_game_description, L"Co-op",

@@ -46,6 +46,8 @@ unsigned int host_memory_watch_generation(unsigned int address, unsigned int siz
 unsigned int host_memory_watch_serial(void);
 void host_memory_watch_prepare_write(unsigned int address, unsigned int size);
 void host_memory_watch_forget(unsigned int address, unsigned int size);
+/* memory_watch_begin_frame (port/linux/src/platform.h) */
+void host_memory_watch_begin_frame(void);
 
 /* ---------- SDL (guest/runtime/guest_sdl.c)
 
@@ -80,11 +82,16 @@ int host_sdl_gamepad_axis(unsigned int gamepad, int axis);
 int host_sdl_gamepad_button(unsigned int gamepad, int button);
 int host_sdl_gamepad_type(unsigned int gamepad);
 int host_sdl_rumble_gamepad(unsigned int gamepad, unsigned int low, unsigned int high, unsigned int milliseconds);
+void host_sdl_close_gamepad(unsigned int gamepad);
 /* callback: void (*)(void *userdata, unsigned int stream, int additional, int total),
 called on the audio thread */
 unsigned int host_sdl_open_audio_stream(unsigned int device, const void *spec, unsigned int callback, unsigned int userdata);
 int host_sdl_put_audio_stream_data(unsigned int stream, const void *data, int length);
 int host_sdl_resume_audio_stream_device(unsigned int stream);
+/* (voice chat's microphone, a stream without a callback) */
+int host_sdl_get_audio_stream_data(unsigned int stream, void *data, int length);
+int host_sdl_get_audio_stream_available(unsigned int stream);
+void host_sdl_destroy_audio_stream(unsigned int stream);
 
 /* ---------- OpenGL ES */
 
@@ -92,8 +99,9 @@ int host_sdl_resume_audio_stream_device(unsigned int stream);
 void host_gl_get_string(unsigned int name, int index, char *buffer, unsigned int size);
 /* nonzero if the context supports the named extension */
 int host_gl_has_extension(const char *name);
-/* a 32-bit word of a GL buffer object, waiting for the GPU */
-unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset);
+/* copies size bytes at offset of a GL buffer object into data, waiting for
+the GPU's writes to it */
+void host_gl_read_buffer(unsigned int buffer, unsigned int offset, unsigned int size, void *data);
 /* unsynchronized write into the buffer bound to target */
 void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data);
 /* fences the GPU work queued so far as that of ring slot `slot`; waits for
@@ -105,5 +113,25 @@ void host_gl_wait_frame(unsigned int slot);
 
 /* the storage directories the port uses, copied into buffer */
 void host_android_path(int which, char *buffer, unsigned int size);
+
+/* the edges where Android keeps its gestures, as left, top, right, bottom
+in pixels of the current orientation, into insets[4]; all 0 when unknown */
+void host_gesture_insets(int *insets);
+
+/* ---------- the on-screen touch controls (host_touch.c) */
+
+/* the overlay's controller: the SDL axes (left x, y, right x, y, left
+trigger, right trigger) and the SDL button bits, into state[7] */
+void host_touch_read(int *state);
+/* the overlay's view swipe, then its gyroscope turn, since the last read,
+into delta[4] */
+void host_touch_look_read(float *delta);
+/* port 0's motors, for the phone's vibration */
+void host_touch_rumble(unsigned int low, unsigned int high);
+/* tells the overlay when to show: touch_input.c's _touch_scene_* */
+void host_touch_scene(int scene);
+/* the game control on each of the 16 controller buttons (touch_game.c),
+for the overlay's labels */
+void host_touch_bindings(const int *controls);
 
 #endif

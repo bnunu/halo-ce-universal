@@ -48,9 +48,12 @@ static void *gl_extension_function(const char *name, const char *extension)
 	return NULL;
 }
 
+/* (glMemoryBarrier is ES 3.1's: the renderer calls it only with the atomic
+counters, which are 3.1's too) */
 static int gl_function_optional(const char *name)
 {
-	return !strcmp(name, "glCopyImageSubData") || !strcmp(name, "glDrawElementsBaseVertex");
+	return !strcmp(name, "glCopyImageSubData") || !strcmp(name, "glDrawElementsBaseVertex") ||
+		!strcmp(name, "glMemoryBarrier");
 }
 
 int gl_functions_load(void)

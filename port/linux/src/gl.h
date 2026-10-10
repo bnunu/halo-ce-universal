@@ -8,13 +8,6 @@ SDL_GL_GetProcAddress once the context exists (gl_functions_load).
 #ifndef __HALO_LINUX_GL_H
 #define __HALO_LINUX_GL_H
 
-/* the renderer for OpenGL ES 3, in place of desktop OpenGL 4.5: Android's,
-and the desktop builds' that configure.py --gles makes, for graphics that
-have no OpenGL 4.5 (through ANGLE, gles_desktop.c) */
-#if defined(HALO_ANDROID) && !defined(HALO_GLES)
-#define HALO_GLES 1
-#endif
-
 /* prototypes are declared only to give each pointer its exact type */
 #define GL_GLEXT_PROTOTYPES 1
 /* the XDK defines APIENTRY as __stdcall; OpenGL on Linux uses cdecl (on
@@ -23,7 +16,10 @@ Windows it is __stdcall too, and SDL would include windows.h without it) */
 #ifndef _WIN32
 #undef APIENTRY
 #endif
-#ifdef HALO_ANDROID
+/* (the OpenGL ES headers are the guest's toolchain's. A desktop build for
+OpenGL ES, configure.py --gles, takes desktop OpenGL's, which have ES 3.2's
+enumerants and prototypes too: gles_desktop.c) */
+#if defined(HALO_GLES) && defined(HALO_ARM64_GUEST)
 #include <GLES3/gl32.h>
 #include <GLES2/gl2ext.h>
 #define GLAPIENTRY GL_APIENTRY
@@ -94,6 +90,7 @@ this list to generate the guest's entry points */
 	X(glBlitFramebuffer) \
 	X(glDrawBuffers) \
 	X(glGenRenderbuffers) \
+	X(glDeleteRenderbuffers) \
 	X(glBindRenderbuffer) \
 	X(glRenderbufferStorageMultisample) \
 	X(glFramebufferRenderbuffer) \
@@ -104,6 +101,8 @@ this list to generate the guest's entry points */
 	X(glBindBuffer) \
 	X(glBufferData) \
 	X(glBufferSubData) \
+	X(glCopyBufferSubData) \
+	X(glMemoryBarrier) \
 	X(glBindBufferBase) \
 	X(glBindBufferRange) \
 	X(glGenVertexArrays) \
@@ -203,6 +202,7 @@ this list to generate the guest's entry points */
 	X(glBlitFramebuffer) \
 	X(glDrawBuffers) \
 	X(glGenRenderbuffers) \
+	X(glDeleteRenderbuffers) \
 	X(glBindRenderbuffer) \
 	X(glRenderbufferStorageMultisample) \
 	X(glFramebufferRenderbuffer) \
@@ -224,6 +224,7 @@ this list to generate the guest's entry points */
 	X(glVertexAttribIFormat) \
 	X(glVertexAttribBinding) \
 	X(glBindVertexBuffer) \
+	X(glBindTextures) \
 	X(glGetQueryBufferObjectuiv) \
 	X(glVertexAttrib4fv) \
 	X(glVertexAttribI4ui) \
@@ -323,6 +324,7 @@ pointers, sees the declarations without these aliases */
 #define glBlitFramebuffer halo_glBlitFramebuffer
 #define glDrawBuffers halo_glDrawBuffers
 #define glGenRenderbuffers halo_glGenRenderbuffers
+#define glDeleteRenderbuffers halo_glDeleteRenderbuffers
 #define glBindRenderbuffer halo_glBindRenderbuffer
 #define glRenderbufferStorageMultisample halo_glRenderbufferStorageMultisample
 #define glFramebufferRenderbuffer halo_glFramebufferRenderbuffer
@@ -333,6 +335,8 @@ pointers, sees the declarations without these aliases */
 #define glBindBuffer halo_glBindBuffer
 #define glBufferData halo_glBufferData
 #define glBufferSubData halo_glBufferSubData
+#define glCopyBufferSubData halo_glCopyBufferSubData
+#define glMemoryBarrier halo_glMemoryBarrier
 #define glBindBufferBase halo_glBindBufferBase
 #define glBindBufferRange halo_glBindBufferRange
 #define glGenVertexArrays halo_glGenVertexArrays
@@ -430,6 +434,7 @@ pointers, sees the declarations without these aliases */
 #define glBlitFramebuffer halo_glBlitFramebuffer
 #define glDrawBuffers halo_glDrawBuffers
 #define glGenRenderbuffers halo_glGenRenderbuffers
+#define glDeleteRenderbuffers halo_glDeleteRenderbuffers
 #define glBindRenderbuffer halo_glBindRenderbuffer
 #define glRenderbufferStorageMultisample halo_glRenderbufferStorageMultisample
 #define glFramebufferRenderbuffer halo_glFramebufferRenderbuffer
@@ -451,6 +456,7 @@ pointers, sees the declarations without these aliases */
 #define glVertexAttribIFormat halo_glVertexAttribIFormat
 #define glVertexAttribBinding halo_glVertexAttribBinding
 #define glBindVertexBuffer halo_glBindVertexBuffer
+#define glBindTextures halo_glBindTextures
 #define glGetQueryBufferObjectuiv halo_glGetQueryBufferObjectuiv
 #define glVertexAttrib4fv halo_glVertexAttrib4fv
 #define glVertexAttribI4ui halo_glVertexAttribI4ui
